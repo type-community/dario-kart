@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  BoostKind, HICCUP_CUT_SECONDS, HICCUP_WARN_SECONDS, InputBit, ItemKind, KARTS, Phase, THEMES, World, botInput, decodeInputs, decodeSnapshot, encodeInputs,
+  BoostKind, InputBit, SlowFlag, ItemKind, KARTS, Phase, THEMES, World, botInput, decodeInputs, decodeSnapshot, encodeInputs,
   encodeSnapshot, generateTrack, makeInput, snapshotSize, targetTrackLength,
 } from "../src/index.ts";
 
@@ -19,7 +19,7 @@ describe("track generation", () => {
   test("tracks grow with the lobby", () => {
     const small = generateTrack("sf", 1, 4);
     const big = generateTrack("sf", 1, 30);
-    expect(big.length).toBeGreaterThan(small.length * 1.6);
+    expect(big.length).toBeGreaterThan(small.length * 1.15);
     expect(big.halfWidth).toBeGreaterThan(small.halfWidth);
     expect(Math.abs(small.length - targetTrackLength(4)) / targetTrackLength(4)).toBeLessThan(0.45);
   });
@@ -50,13 +50,13 @@ describe("track generation", () => {
 
 describe("headless races", () => {
   for (const theme of THEMES) {
-    test(`bots finish 3 laps on ${theme.name}`, () => {
+    test(`a race on ${theme.name} is about 50 seconds`, () => {
       const world = new World({ theme: theme.id, seed: 1234, racers: racers(8) });
       runRace(world, 400);
-      const finished = world.karts.filter((k) => k.finished).length;
-      expect(finished).toBe(8);
-      const seconds = world.tick / 60;
-      expect(seconds).toBeLessThan(400);
+      expect(world.karts.filter((k) => k.finished).length).toBeGreaterThanOrEqual(5);
+      const winner = Math.min(...world.karts.filter((k) => k.finished).map((k) => k.finishTick)) / 60 - 3;
+      expect(winner).toBeGreaterThan(30);
+      expect(winner).toBeLessThan(60);
     });
   }
 
@@ -165,16 +165,40 @@ describe("feel", () => {
     expect(kart.item).toBe(ItemKind.None);
   });
 
-  test("rate limits warn before cutting the engine", () => {
+  test("a glancing wall scrape costs almost nothing, a head-on hit is flagged", () => {
     const world = solo();
     skipCountdown(world);
     const kart = world.karts[0];
-    kart.hiccupT = HICCUP_WARN_SECONDS + HICCUP_CUT_SECONDS;
-    kart.speed = 30;
-    const inputs = world.karts.map(() => makeInput());
-    inputs[0].bits = InputBit.Throttle;
-    world.step(inputs);
-    expect(kart.speed).toBeGreaterThan(29.9);
+    const limit = world.track.halfWidth - 1;
+    const idle = world.karts.map(() => makeInput());
+    kart.d = limit - 0.05;
+    kart.speed = 50;
+    kart.heading = 0.08;
+    world.step(idle);
+    expect(kart.speed).toBeGreaterThan(48);
+    expect(kart.slowFlags & SlowFlag.Wall).toBe(0);
+    for (let t = 0; t < 30; t++) world.step(idle);
+    kart.d = limit - 0.2;
+    kart.wallT = 0;
+    kart.speed = 50;
+    kart.heading = 1.2;
+    world.step(idle);
+    world.step(idle);
+    expect(kart.speed).toBeLessThan(45);
+    expect(kart.slowFlags & SlowFlag.Wall).toBeTruthy();
+  });
+
+  test("your own missile never hits you", () => {
+    const world = solo();
+    skipCountdown(world);
+    const me = world.karts[0];
+    world.spawnMissile(me, true);
+    const m = world.missiles.find((x) => x.active)!;
+    m.dist = me.dist;
+    m.d = me.d;
+    m.age = 2;
+    world.step(world.karts.map(() => makeInput()));
+    expect(me.stunT).toBe(0);
   });
 });
 

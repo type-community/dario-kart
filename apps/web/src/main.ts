@@ -1,6 +1,6 @@
 import "./style.css";
 import {
-  CHARACTERS, KARTS, type RaceResult, type RaceSlot, type ServerMessage, THEMES, TICK_RATE, type ThemeId, kartById,
+  CHARACTERS, KARTS, LAPS, type RaceResult, type RaceSlot, type ServerMessage, THEMES, TICK_RATE, type ThemeId, kartById,
 } from "@dario-kart/sim";
 import { sound } from "./audio.ts";
 import { Controls } from "./controls.ts";
@@ -93,7 +93,7 @@ const practice = () => {
       return { id: `b${i}`, name: `${c.name} Bot`, character: c.id, kart: kart.id, primary: kart.color, secondary: kart.accent, bot: true };
     }),
   ];
-  startRace({ seed: (Math.random() * 1e9) | 0, track: theme, laps: 3, slots, you: 0 }, true);
+  startRace({ seed: (Math.random() * 1e9) | 0, track: theme, laps: LAPS, slots, you: 0 }, true);
 };
 
 const go = (next: Screen) => {

@@ -5,19 +5,16 @@ import { FeatureKind, type Track, curvatureAt, generateTrack, gridSlot, makeSurf
 
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
-export const LAPS = 3;
+export const LAPS = 2;
 export const COUNTDOWN_TICKS = 3 * TICK_RATE;
 export const RESET_TICKS = 10 * TICK_RATE;
 export const KART_RADIUS = 1.0;
 /** Once someone finishes, everyone else has this long before the race is called. */
-export const FINISH_GRACE_TICKS = 45 * TICK_RATE;
+export const FINISH_GRACE_TICKS = 20 * TICK_RATE;
 const GRAVITY = 34;
 const SLOPE_GRAVITY = 16;
 /** Seconds the item roulette spins before you can use what you got. */
 export const ITEM_ROLL_SECONDS = 1.1;
-/** Rate limits are telegraphed: a warning first, then the engine cuts out. */
-export const HICCUP_WARN_SECONDS = 0.7;
-export const HICCUP_CUT_SECONDS = 0.45;
 export const DRIFT_TIER1 = 0.7;
 export const DRIFT_TIER2 = 1.4;
 export const DRIFT_TIER3 = 2.3;
@@ -77,10 +74,11 @@ export const STAT = {
   steerBase: 1.5,
   steerPer: 0.14,
   assistPer: 0.012,
-  hiccupPer: 0.016,
   stunBase: 1.45,
   stunPerDurability: 0.075,
 };
+/** Why a kart is slower than it wants to be, so the HUD can always say. */
+export const SlowFlag = { Wall: 1, SlowZone: 2, Oil: 4, Reset: 8, Hit: 16 } as const;
 export const BoostKind = { None: 0, Pad: 1, Drift: 2, SuperDrift: 3, Landing: 4, Item: 5, UltraDrift: 6, Draft: 7, Trick: 8, Rocket: 9 } as const;
 const MISSILE_SPEED = 88;
 const BULLET_SPEED = 96;
@@ -109,7 +107,8 @@ export class Kart {
   readonly accel: number;
   readonly steerRate: number;
   readonly grip: number;
-  readonly hiccupRate: number;
+  /** Reliability as traction: how much speed walls, slow zones and oil can take from you. */
+  readonly traction: number;
   readonly hpMax: number;
   readonly mass: number;
   readonly durability: number;
@@ -126,7 +125,8 @@ export class Kart {
   stunT = 0;
   slickT = 0;
   slickImmuneT = 0;
-  hiccupT = 0;
+  wallT = 0;
+  slowFlags = 0;
   bulletT = 0;
   agiT = 0;
   airT = 0;
@@ -141,6 +141,7 @@ export class Kart {
   /** -1 flooded, 0 normal, 1 good, 2 perfect */
   startResult = 0;
   botStartTick = 0;
+  botSkill = 0.85;
   drifting = 0;
   driftDir = 0;
   driftCharge = 0;
@@ -171,7 +172,7 @@ export class Kart {
     this.steerRate = STAT.steerBase + model.handling * STAT.steerPer;
     this.grip = 3.5 + model.handling * 0.45;
     this.cornerAssist = CORNER_ASSIST + model.handling * STAT.assistPer;
-    this.hiccupRate = model.perk === "constitutional" ? 0 : (10 - model.reliability) * STAT.hiccupPer;
+    this.traction = model.reliability / 10;
     this.hpMax = 60 + model.durability * 10;
     this.mass = 0.75 + model.durability * 0.07;
     this.durability = model.durability;
@@ -194,7 +195,7 @@ export class Kart {
  */
 export const KART_NET_FIELDS = [
   "dist", "d", "z", "vz", "heading", "slip", "speed", "kickV",
-  "boostT", "boostKind", "stunT", "slickT", "slickImmuneT", "hiccupT", "bulletT", "agiT", "airT", "itemRollT",
+  "boostT", "boostKind", "stunT", "slickT", "slickImmuneT", "slowFlags", "bulletT", "agiT", "airT", "itemRollT",
   "drifting", "driftDir", "driftCharge", "hp", "gpus", "draftCharge", "trickT", "trickPending", "startResult",
   "item", "itemCount", "item2", "item2Count", "finishTick", "prevBits",
 ] as const satisfies ReadonlyArray<keyof Kart>;
@@ -275,6 +276,7 @@ export class World {
       kart.botLane = grid.d;
       kart.botItemDelay = 1 + hash01(options.seed, slot, 99) * 2;
       kart.botStartTick = 6 + Math.floor(hash01(options.seed, slot, 77) * 70);
+      kart.botSkill = 0.8 + hash01(options.seed, slot, 55) * 0.1;
       return kart;
     });
     this.order = this.karts.slice();
@@ -393,7 +395,8 @@ export class World {
       }
       for (const kart of this.karts) {
         if (kart.finished || kart.z > 3) continue;
-        if (kart.slot === m.owner && m.age < 0.5) continue;
+        // Your own missiles never hit you, even after a bounce.
+        if (kart.slot === m.owner) continue;
         let ds = (kart.dist - m.dist) % L;
         if (ds > L / 2) ds -= L;
         if (ds < -L / 2) ds += L;
@@ -419,7 +422,8 @@ export class World {
       }
       for (const kart of this.karts) {
         if (kart.invincible || kart.z > 1 || kart.slickImmuneT > 0) continue;
-        if (kart.slot === oil.owner && oil.age < 1.5) continue;
+        // Nothing you drop can ever slow you down.
+        if (kart.slot === oil.owner) continue;
         let ds = (kart.dist - oil.dist) % L;
         if (ds > L / 2) ds -= L;
         if (ds < -L / 2) ds += L;
@@ -692,7 +696,7 @@ const applyFeatures = (world: World, kart: Kart): void => {
     if (s < f.s || s > f.s + f.length) continue;
     if (Math.abs(kart.d - f.d) > f.halfWidth) continue;
     if (f.kind === FeatureKind.Boost) {
-      giveBoost(kart, 1.1, BoostKind.Pad);
+      giveBoost(kart, 1.8, BoostKind.Pad);
     } else if (f.kind === FeatureKind.Slow) {
       if (kart.bulletT <= 0 && kart.agiT <= 0) kart.slowZone = 1;
     } else if (f.kind === FeatureKind.Ramp || f.kind === FeatureKind.Launch) {
@@ -700,7 +704,7 @@ const applyFeatures = (world: World, kart: Kart): void => {
         const launch = f.kind === FeatureKind.Launch;
         kart.vz = launch ? Math.min(22, 6 + kart.speed * 0.3) : Math.min(16, 4 + kart.speed * 0.22);
         kart.z = 0.05;
-        if (launch) giveBoost(kart, 0.6, BoostKind.Pad);
+        if (launch) giveBoost(kart, 1.4, BoostKind.Pad);
       }
     }
   }
@@ -744,7 +748,7 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
   if (kart.stunT > 0) kart.stunT -= DT;
   if (kart.slickT > 0) kart.slickT -= DT;
   if (kart.slickImmuneT > 0) kart.slickImmuneT -= DT;
-  if (kart.hiccupT > 0) kart.hiccupT -= DT;
+  if (kart.wallT > 0) kart.wallT -= DT;
   if (kart.bulletT > 0) kart.bulletT -= DT;
   if (kart.agiT > 0) kart.agiT -= DT;
   if (kart.itemRollT > 0) kart.itemRollT -= DT;
@@ -761,14 +765,16 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
   }
 
   const throttleHeld = (bits & InputBit.Throttle) !== 0;
-  if (kart.hiccupT <= 0 && kart.hiccupRate > 0 && throttleHeld && grounded && !kart.invincible) {
-    const roll = hash01(world.seed, input.seq || world.tick, kart.slot * 13 + 3);
-    if (roll < kart.hiccupRate * DT) kart.hiccupT = HICCUP_WARN_SECONDS + HICCUP_CUT_SECONDS;
-  }
-  const engineCut = kart.hiccupT > 0 && kart.hiccupT <= HICCUP_CUT_SECONDS;
+  const engineCut = false;
 
   surfaceAt(track, kart.dist, surface);
   const k = surface.curvature;
+  // Keep a wall flag briefly so the HUD can name it; everything else is live state.
+  kart.slowFlags = (kart.slowFlags & SlowFlag.Wall && kart.wallT > 0.1 ? SlowFlag.Wall : 0)
+    | (kart.slowZone ? SlowFlag.SlowZone : 0)
+    | (kart.slickT > 0 ? SlowFlag.Oil : 0)
+    | (kart.inReset ? SlowFlag.Reset : 0)
+    | (kart.stunT > 0 ? SlowFlag.Hit : 0);
   let steer = control ? Math.max(-1, Math.min(1, input.steer)) : 0;
   if (kart.slickT > 0) steer = steer * 0.35 + Math.sin(world.tick * 0.33 + kart.slot) * 0.9;
 
@@ -790,7 +796,7 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
       accel *= 2.2;
     }
     if (kart.agiT > 0) maxSpeed *= 1.3;
-    if (kart.slowZone) maxSpeed *= 0.5;
+    if (kart.slowZone) maxSpeed *= 0.55 + kart.traction * 0.2;
     if (kart.inReset) maxSpeed *= 0.42;
 
     const throttle = control && !engineCut && (throttleHeld || kart.boostT > 0);
@@ -799,7 +805,8 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
       const ratio = Math.max(0, kart.speed) / maxSpeed;
       kart.speed = Math.min(maxSpeed, kart.speed + accel * (1 - 0.7 * ratio) * DT);
     } else if (kart.speed > maxSpeed) {
-      kart.speed -= (kart.speed - maxSpeed) * Math.min(1, (kart.slowZone || kart.inReset ? 4 : 1.6) * DT);
+      // Momentum: after a boost the extra speed fades out gently instead of cutting off.
+      kart.speed -= (kart.speed - maxSpeed) * Math.min(1, (kart.slowZone || kart.inReset ? 3 : 0.55) * DT);
     } else if (brake) {
       kart.speed = kart.speed > 0 ? kart.speed - 48 * DT : Math.max(-14, kart.speed - 20 * DT);
     } else {
@@ -851,7 +858,8 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
   kart.dist += dsdt * DT;
   kart.d += (kart.speed * Math.sin(move) + kart.kickV) * DT;
   kart.kickV -= kart.kickV * Math.min(1, 2.6 * DT);
-  const assist = grounded && !surface.loop ? kart.cornerAssist : 0;
+  // In the air the kart keeps following the road's curve, so jumps don't land you in the wall.
+  const assist = surface.loop ? 0 : grounded ? kart.cornerAssist : 0.9;
   kart.heading = wrapAngle(kart.heading - k * dsdt * DT * (1 - assist));
 
   const limit = track.halfWidth - KART_RADIUS;
@@ -859,11 +867,18 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
     const side = kart.d > 0 ? 1 : -1;
     kart.d = side * limit;
     if (kart.kickV * side > 0) kart.kickV = -kart.kickV * 0.45;
-    if (Math.sin(move) * side > 0) {
+    const impact = Math.sin(move) * side;
+    if (impact > 0) {
       const h = kart.heading;
       kart.heading = Math.abs(h) < Math.PI / 2 ? h * 0.35 : Math.sign(h) * (Math.PI - (Math.PI - Math.abs(h)) * 0.35);
       kart.slip = 0;
-      if (kart.bulletT <= 0) kart.speed *= 0.9;
+      // Walls are glancing: a scrape costs almost nothing, only a head-on hit hurts.
+      if (kart.wallT <= 0 && kart.bulletT <= 0) {
+        const loss = impact * impact * (0.32 - kart.traction * 0.12);
+        kart.speed *= 1 - loss;
+        if (loss > 0.03) kart.slowFlags |= SlowFlag.Wall;
+      }
+      kart.wallT = 0.3;
     }
   }
 

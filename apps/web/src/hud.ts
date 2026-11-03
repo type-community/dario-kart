@@ -1,5 +1,5 @@
 import {
-  BoostKind, DRAFT_SECONDS, DRIFT_TIER1, DRIFT_TIER2, DRIFT_TIER3, HICCUP_CUT_SECONDS, MAX_GPUS, ITEM_NAMES, ITEM_ROLL_SECONDS, ItemKind, KARTS, type Track,
+  BoostKind, DRAFT_SECONDS, DRIFT_TIER1, DRIFT_TIER2, DRIFT_TIER3, MAX_GPUS, SlowFlag, ITEM_NAMES, ITEM_ROLL_SECONDS, ItemKind, KARTS, type Track,
 } from "@dario-kart/sim";
 
 const GLYPHS: Record<number, string> = {
@@ -20,6 +20,14 @@ const ITEM_HINT: Record<number, string> = {
   [ItemKind.NerfBullet]: "E turns you into an unstoppable bullet",
   [ItemKind.Agi]: "E: invincible, faster, knocks out anyone you touch",
 };
+
+const SLOW_CAUSES = [
+  { flag: SlowFlag.Hit, icon: "💥", title: "Hit!", body: "Spun out. You'll recover in a moment" },
+  { flag: SlowFlag.Reset, icon: "⏪", title: "Caught by The Reset", body: "Slowed until the wall passes" },
+  { flag: SlowFlag.SlowZone, icon: "⛔", title: "Slow zone", body: "Stay off the red stripes" },
+  { flag: SlowFlag.Oil, icon: "🛢️", title: "Oil slick", body: "Steering is slippery for a second" },
+  { flag: SlowFlag.Wall, icon: "🧱", title: "Hit the wall", body: "Glance off walls instead of hitting them head on" },
+] as const;
 
 const BOOST_NAMES: Record<number, string> = {
   [BoostKind.Pad]: "Boost pad",
@@ -59,7 +67,7 @@ export interface HudState {
   driftCharge: number;
   boostKind: number;
   itemRollT: number;
-  hiccupT: number;
+  slowFlags: number;
   kartModel: number;
   gpus: number;
   draftCharge: number;
@@ -96,6 +104,7 @@ export class Hud {
   private lastBoostKind = 0;
   private wasRolling = false;
   private calloutTimer: ReturnType<typeof setTimeout> | null = null;
+  private cardTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -114,9 +123,9 @@ export class Hud {
         <div class="drift-label" data-k="driftLabel"></div>
         <div class="drift-bar"><i data-k="driftFill"></i><b style="left:${(DRIFT_TIER1 / DRIFT_TIER3) * 100}%"></b><b style="left:${(DRIFT_TIER2 / DRIFT_TIER3) * 100}%"></b></div>
       </div>
-      <div class="hud-ratelimit" data-k="ratelimit" hidden>
-        <strong data-k="rlTitle"></strong><span data-k="rlBody"></span>
-      </div>
+      <div class="hud-vignette" data-k="vignette"></div>
+      <div class="hud-slow" data-k="slow" hidden><b data-k="slowIcon"></b><div><strong data-k="slowTitle"></strong><span data-k="slowBody"></span></div></div>
+      <div class="hud-getcard" data-k="getcard" hidden><div class="glyph" data-k="getGlyph"></div><strong data-k="getName"></strong><span data-k="getHint"></span></div>
       <div class="hud-center" data-k="center"></div>
       <div class="hud-banner" data-k="banner" hidden><strong data-k="bannerTitle"></strong><span data-k="bannerSub"></span></div>
       <div class="hud-placepop" data-k="placepop" hidden></div>
@@ -298,11 +307,27 @@ export class Hud {
         this.el.itemName.innerHTML = name ? `${name}<small>${ITEM_HINT[s.item] ?? ""}</small>` : "";
       }
     }
+    if (rolling && !this.wasRolling) {
+      this.el.getcard.hidden = false;
+      this.el.getcard.className = "hud-getcard rolling";
+      this.set("getName", "Item box!");
+      this.set("getHint", "");
+      if (this.cardTimer) clearTimeout(this.cardTimer);
+    }
+    if (rolling) {
+      const progress = 1 - s.itemRollT / ITEM_ROLL_SECONDS;
+      const frame = Math.floor(performance.now() / (1000 / (24 - progress * 18))) % REEL.length;
+      this.set("getGlyph", REEL[frame]);
+    }
     if (this.wasRolling && !rolling && s.item !== ItemKind.None) {
       this.el.slot1.classList.remove("landed");
       void this.el.slot1.offsetWidth;
       this.el.slot1.classList.add("landed");
-      this.callout(`You got ${ITEM_NAMES[s.item]}`, "item");
+      this.el.getcard.className = "hud-getcard landed";
+      this.set("getGlyph", GLYPHS[s.item] ?? "");
+      this.set("getName", ITEM_NAMES[s.item]);
+      this.set("getHint", ITEM_HINT[s.item] ?? "");
+      this.cardTimer = setTimeout(() => (this.el.getcard.hidden = true), 1800);
     }
     this.wasRolling = rolling;
     this.el.slot1.classList.toggle("full", s.item !== ItemKind.None);
@@ -338,15 +363,15 @@ export class Hud {
     if (s.draftCharge > 0.05) this.el.draftFill.style.width = `${Math.min(1, s.draftCharge / DRAFT_SECONDS) * 100}%`;
     this.el.emotes.hidden = s.spectating;
 
-    // Rate limits are explained, not just announced.
-    const model = KARTS[s.kartModel];
-    const cut = s.hiccupT > 0 && s.hiccupT <= HICCUP_CUT_SECONDS;
-    const warn = s.hiccupT > HICCUP_CUT_SECONDS;
-    this.el.ratelimit.hidden = !(cut || warn) || s.spectating;
-    if (cut || warn) {
-      this.el.ratelimit.classList.toggle("cut", cut);
-      this.set("rlTitle", cut ? "Rate limited. Engine paused" : "Rate limit incoming");
-      this.set("rlBody", `${model?.name ?? "Your kart"} has ${model?.reliability ?? "?"}/10 reliability, so it stalls now and then.`);
+    // Every slowdown says exactly what caused it.
+    const cause = SLOW_CAUSES.find((c) => s.slowFlags & c.flag);
+    this.el.slow.hidden = !cause || s.spectating;
+    this.el.vignette.classList.toggle("on", !!cause && !s.spectating);
+    this.el.speed.classList.toggle("slowed", !!cause);
+    if (cause) {
+      this.set("slowIcon", cause.icon);
+      this.set("slowTitle", cause.title);
+      this.set("slowBody", cause.body);
     }
 
     const countdown = s.racing ? (s.raceSeconds < 1 ? 0 : -1) : Math.ceil(s.countdown);

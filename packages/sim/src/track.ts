@@ -111,9 +111,10 @@ export interface Surface {
 export const makeSurface = (): Surface => ({ curvature: 0, pitch: 0, slope: 0, upY: 1, loop: false });
 
 export const trackHalfWidth = (theme: ThemeId, playerCount: number): number =>
-  Math.min(16, Math.max(6.5, (6.4 + 0.12 * playerCount) * themeById(theme).widthScale));
+  Math.min(18, Math.max(8, (8 + 0.12 * playerCount) * themeById(theme).widthScale));
 
-export const targetTrackLength = (playerCount: number): number => 1250 + 380 * Math.sqrt(playerCount);
+/** Two laps of this take about 50 s for a small lobby; big lobbies get a bit more road. */
+export const targetTrackLength = (playerCount: number): number => 1000 + 110 * Math.sqrt(playerCount);
 
 export const wrapS = (track: Track, s: number): number => {
   const L = track.length;
@@ -229,7 +230,7 @@ const buildCenterline = (
 ): Centerline => {
   const theme = themeById(themeId);
   const target = targetTrackLength(playerCount);
-  const corners = Math.min(34, Math.max(9, 11 + Math.floor(playerCount / 5) + theme.extraCorners));
+  const corners = Math.min(24, Math.max(7, 8 + Math.floor(playerCount / 8) + Math.round(theme.extraCorners / 2)));
   const radius = (target / (2 * Math.PI)) * 0.8;
   const px: number[] = [];
   const pz: number[] = [];
@@ -356,7 +357,7 @@ export const generateTrack = (theme: ThemeId, seed: number, playerCount: number)
   // Loop sites: straight stretches away from the start line and from each other.
   const loopRadius = 12 + halfWidth * 0.35;
   const loopShift = halfWidth * 2 + 7;
-  const wantLoops = themeDef.loops + Math.floor(L2 / 2600);
+  const wantLoops = Math.min(themeDef.loops, 1) + Math.floor(L2 / 2000);
   const sites: number[] = [];
   for (let pass = 0; pass < 3 && sites.length < wantLoops; pass++) {
     const tolerance = [0.0045, 0.007, 0.011][pass];

@@ -70,7 +70,7 @@ const driverPicker = (profile: Profile) => `
 
 const kartPicker = (profile: Profile) => `
   <div class="karts" role="group" aria-label="Kart">
-    <div class="kart-row header" aria-hidden="true"><span></span><span>Speed</span><span>Handling</span><span>Reliability</span><span>Durability</span></div>
+    <div class="kart-row header"><span></span><span title="Top speed">Speed</span><span title="Turning and acceleration">Handling</span><span title="Traction: keeps your speed through walls, oil and slow zones">Reliability</span><span title="Shrugs off hits and recovers faster">Durability</span></div>
     ${KARTS.map((k) => {
       const selected = k.id === profile.kart;
       return `
