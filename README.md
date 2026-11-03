@@ -72,9 +72,13 @@ alchemy.run.ts    the whole stack: game Worker + Vite site
 
 ## Deploying
 
+Merging to `main` deploys: `.github/workflows/deploy.yml` runs after CI passes and ships the `prod` stage to [dariokart.type.com](https://dariokart.type.com). It needs two repo secrets, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+
+To deploy by hand:
+
 ```sh
 bun alchemy profile edit --add Cloudflare   # one-time login
 bun run deploy
 ```
 
-Races in progress keep running the code they started with for up to 20 minutes after a deploy (`codeUpdateStrategy` in `apps/server/src/worker.ts`). State is stored locally in `.alchemy/`. Switch `alchemy.run.ts` to `Cloudflare.state()` before deploying from CI or sharing with a team.
+Races in progress keep running the code they started with for up to 20 minutes after a deploy (`codeUpdateStrategy` in `apps/server/src/worker.ts`). Deploy state lives in the Cloudflare account (`Cloudflare.state()`), so CI and laptops see the same record of what's deployed.

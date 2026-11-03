@@ -1,6 +1,5 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "@alchemy.run/cloudflare";
-import { localState } from "alchemy/State";
 import * as Effect from "effect/Effect";
 import Game from "./apps/server/src/worker.ts";
 
@@ -8,7 +7,8 @@ export default Alchemy.Stack(
   "DarioKart",
   {
     providers: Cloudflare.providers(),
-    state: localState(),
+    // Shared deploy state in the Cloudflare account, so CI and laptops agree on what exists.
+    state: Cloudflare.state(),
   },
   Effect.gen(function* () {
     const game = yield* Game;
