@@ -13,8 +13,11 @@ const RETRY_MS = [300, 1000, 2000, 4000, 8000];
 /** No pong for this long means the socket is dead even if the browser hasn't noticed. */
 const PONG_TIMEOUT_MS = 7000;
 
-/** Close codes that mean "don't come back": we left, or the lobby is full. */
-const FINAL_CODES = new Set([1000, 1013]);
+/**
+ * Close codes that mean "don't come back": we left, the lobby is full, or a
+ * newer connection took our seat (retrying would just take it back).
+ */
+const FINAL_CODES = new Set([1000, 1013, 4000]);
 
 export class Net {
   private ws: WebSocket | null = null;
@@ -28,7 +31,7 @@ export class Net {
   onMessage: (msg: ServerMessage) => void = () => {};
   onSnapshot: (snap: DecodedSnapshot) => void = () => {};
   /** The connection is gone for good. */
-  onClose: (reason: string) => void = () => {};
+  onClose: (reason: string, code: number) => void = () => {};
   /** A drop we're retrying; `attempt` starts at 1. */
   onReconnecting: (attempt: number) => void = () => {};
   onReconnected: () => void = () => {};
@@ -101,7 +104,7 @@ export class Net {
     this.stopPing();
     if (!this.target || FINAL_CODES.has(code) || this.attempt >= RETRY_MS.length) {
       this.target = null;
-      this.onClose(`${reason || "Lost connection to the race server."} (code ${code})`);
+      this.onClose(`${reason || "Lost connection to the race server."} (code ${code})`, code);
       return;
     }
     const delay = RETRY_MS[this.attempt++];

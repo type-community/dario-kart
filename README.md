@@ -42,16 +42,17 @@ bun scripts/balance.ts 240 8             # Monte-Carlo kart balance: win rate an
 
 ## Logs
 
-The race server writes one JSON line per event to Cloudflare Workers Logs: `join` (with `rejoinedSlot` when a dropped player gets their kart back), `leave` (with the WebSocket `closeCode` and `reason`), `race_start`, `race_finish`, `race_abandoned`, `restored` (the Durable Object was reset), and `client_error` (browser errors reported by the client).
+The race server writes one JSON line per event to Cloudflare Workers Logs: `join` (with `rejoinedSlot` when a dropped player gets their kart back), `leave` (with the WebSocket `closeCode` and `reason`), `race_start`, `race_finish`, `race_abandoned`, `restored` (the Durable Object woke from hibernation or was reset), and `client_error` (browser errors reported by the client). Per-message invocation logs are off, since every 30 Hz input is an invocation.
 
 ```sh
-bun alchemy logs --stage prod --since 1h          # recent events
-bun alchemy logs --stage prod --tail              # stream live
+bun scripts/logs.ts 60                            # last hour of events, with their fields
+bun scripts/logs.ts 180 leave                     # only one event type
+bun alchemy logs --stage prod --tail              # stream live (names only)
 ```
 
 Or open the Game Worker in the Cloudflare dashboard, under Observability, and filter on `event`.
 
-Close codes worth knowing: `1000` the player left, `1001` the browser went away (tab closed, reloaded, or the browser dropped it), `1006` the network died, `4000` replaced by a newer connection from the same player, `4001` the client gave up after no pong for 7 s. Clients reconnect automatically (5 tries over about 15 s) and get their seat back mid-race; a race with nobody connected keeps running for 30 s before it's abandoned.
+Close codes worth knowing: `1000` the player left, `1001` the browser went away (tab closed, reloaded, or the browser dropped it), `1006` the network died, `4000` replaced by a newer connection from the same player (the old one stops retrying; player ids are per tab, so this means a half-open socket was replaced), `4001` the client gave up after no pong for 7 s. Clients reconnect automatically (5 tries over about 15 s) and get their seat back mid-race; a race with nobody connected keeps running for 30 s before it's abandoned.
 
 ## Formal verification
 

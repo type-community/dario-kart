@@ -277,8 +277,12 @@ export class RaceRoom {
    * spectating. If their old socket is still half-open, the new one wins.
    */
   private reattach(player: Player): number {
-    const slot = this.slots.findIndex((s) => !s.bot && s.id === player.info.id);
-    if (slot < 0 || this.world!.karts[slot].finished) return -1;
+    // Two tabs can share an id. Prefer a seat nobody holds so one tab's reconnect
+    // doesn't take the other tab's kart.
+    const mine = (i: number) => !this.slots[i].bot && this.slots[i].id === player.info.id && !this.world!.karts[i].finished;
+    let slot = this.slots.findIndex((_, i) => mine(i) && !this.slotPlayers[i]);
+    if (slot < 0) slot = this.slots.findIndex((_, i) => mine(i));
+    if (slot < 0) return -1;
     const holder = this.slotPlayers[slot];
     if (holder && holder !== player) {
       holder.slot = -1;

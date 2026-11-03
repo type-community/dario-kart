@@ -25,8 +25,12 @@ const preview = new KartPreview();
 
 const stored = (key: string, fallback: string) => localStorage.getItem(`dk.${key}`) ?? fallback;
 const initialKart = stored("kart", KARTS[Math.floor(Math.random() * KARTS.length)].id);
+// The id is per tab (sessionStorage survives reloads), so two tabs are two players
+// instead of one player who keeps taking their own seat back.
+const tabId = sessionStorage.getItem("dk.id") ?? crypto.randomUUID();
+sessionStorage.setItem("dk.id", tabId);
 const profile: Profile = {
-  id: stored("id", crypto.randomUUID()),
+  id: tabId,
   name: stored("name", ""),
   character: stored("character", CHARACTERS[Math.floor(Math.random() * CHARACTERS.length)].id),
   kart: initialKart,
@@ -34,7 +38,7 @@ const profile: Profile = {
   secondary: Number(stored("secondary", String(kartById(initialKart).accent))),
 };
 const saveProfile = () => {
-  for (const [k, v] of Object.entries(profile)) localStorage.setItem(`dk.${k}`, String(v));
+  for (const [k, v] of Object.entries(profile)) if (k !== "id") localStorage.setItem(`dk.${k}`, String(v));
 };
 saveProfile();
 
@@ -164,9 +168,9 @@ const join = (code: string, pushHistory = true) => {
   net.connect(clean, hello());
 };
 
-net.onClose = (reason) => {
+net.onClose = (reason, code) => {
   hideReconnecting();
-  goHome(`${reason} Check your connection and try again.`, false);
+  goHome(code === 4000 ? "You joined this race from another tab or device." : `${reason} Check your connection and try again.`, false);
 };
 
 let reconnectBanner: HTMLElement | null = null;

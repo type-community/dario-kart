@@ -110,4 +110,32 @@ describe("race lifecycle", () => {
     room.disconnect(fresh.conn);
     room.disconnect(old.conn);
   });
+
+  test("two tabs with one id don't steal each other's kart on reconnect", () => {
+    const room = new RaceRoom(() => {});
+    let firstClosed = 0;
+    const first = client();
+    first.conn.close = (code) => { firstClosed = code; };
+    const second = client();
+    room.connect(first.conn, "TLA5");
+    room.connect(second.conn, "TLA5");
+    hello(room, first.conn, "Ada");
+    hello(room, second.conn, "Ada");
+    room.message(first.conn, JSON.stringify({ t: "start" }));
+    const seat = (c: ReturnType<typeof client>) => {
+      const race = c.messages.findLast((m) => m.t === "race");
+      return race && race.t === "race" ? race.you : -2;
+    };
+    expect([seat(first), seat(second)].sort()).toEqual([0, 1]);
+    const secondSeat = seat(second);
+
+    room.disconnect(second.conn, 1006, "network");
+    const back = client();
+    room.connect(back.conn, "TLA5");
+    hello(room, back.conn, "Ada");
+    expect(seat(back)).toBe(secondSeat);
+    expect(firstClosed).toBe(0);
+    room.disconnect(back.conn);
+    room.disconnect(first.conn);
+  });
 });
