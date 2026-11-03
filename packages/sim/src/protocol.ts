@@ -1,5 +1,6 @@
 import type { ThemeId } from "./content.ts";
 import type { Input } from "./input.ts";
+import type { NetReport } from "./stats.ts";
 import { KART_NET_FIELDS, type Kart, type World } from "./world.ts";
 
 /** Lobby/control traffic is JSON text; race traffic is binary. */
@@ -44,7 +45,9 @@ export type ClientMessage =
   | { readonly t: "ping"; readonly at: number }
   | { readonly t: "leave" }
   | { readonly t: "emote"; readonly n: number }
-  | { readonly t: "clientError"; readonly message: string; readonly stack?: string; readonly context?: string };
+  | { readonly t: "clientError"; readonly message: string; readonly stack?: string; readonly context?: string }
+  /** Connection quality so far this race; `final` once the race is over. */
+  | { readonly t: "netStats"; readonly seed: number; readonly final: boolean; readonly report: NetReport };
 
 export type ServerMessage =
   | { readonly t: "lobby"; readonly code: string; readonly players: ReadonlyArray<LobbyPlayer>; readonly track: ThemeId; readonly bots: number; readonly racing: boolean }

@@ -44,9 +44,12 @@ bun scripts/balance.ts 240 8             # Monte-Carlo kart balance: win rate an
 
 The race server writes one JSON line per event to Cloudflare Workers Logs: `join` (with `rejoinedSlot` when a dropped player gets their kart back), `leave` (with the WebSocket `closeCode` and `reason`), `race_start`, `race_finish`, `race_abandoned`, `restored` (the Durable Object woke from hibernation or was reset), and `client_error` (browser errors reported by the client). Per-message invocation logs are off, since every 30 Hz input is an invocation.
 
+`net_stats` is one line per player per race (logged when the race ends, or when they drop): `down` is the gaps between snapshots reaching the browser (the server sends one every 50 ms), `up` is the gaps between that player's inputs reaching the server (sent every 33 ms), plus round-trip time, long frames, reconnects and time spent in a background tab. `race_finish` carries `serverSnapshotGaps`, the server's own sending rhythm, so a stall there is the Durable Object, not the network. Each gap summary has `p50`/`p95`/`p99`/`max` in ms and counts `over150` (a visible hitch) and `over300` (a freeze, then a jump).
+
 ```sh
 bun scripts/logs.ts 60                            # last hour of events, with their fields
 bun scripts/logs.ts 180 leave                     # only one event type
+bun scripts/logs.ts 1440 net_stats                # a day of connection quality
 bun alchemy logs --stage prod --tail              # stream live (names only)
 ```
 

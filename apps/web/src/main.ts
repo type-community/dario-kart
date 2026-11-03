@@ -138,6 +138,7 @@ const go = (next: Screen) => {
 
 /** Leave whatever lobby/race you're in and land on the start screen. */
 const goHome = (error = "", updateUrl = true) => {
+  sendNetStats(true);
   net.send({ t: "leave" });
   net.close();
   lobby = null;
@@ -208,6 +209,19 @@ const sendPick = () => {
   if (screen.kind === "lobby") go({ kind: "lobby" });
 };
 
+// Connection quality per race: a running report every 10 s (so a player who drops
+// still leaves numbers behind) and a final one when the results arrive.
+let statsSeed = -1;
+let statsTimer: ReturnType<typeof setInterval> | null = null;
+const sendNetStats = (final: boolean) => {
+  if (statsSeed >= 0) net.send({ t: "netStats", seed: statsSeed, final, report: net.report() });
+  if (final) {
+    statsSeed = -1;
+    if (statsTimer) clearInterval(statsTimer);
+    statsTimer = null;
+  }
+};
+
 net.onMessage = (msg: ServerMessage) => {
   switch (msg.t) {
     case "lobby":
@@ -221,9 +235,17 @@ net.onMessage = (msg: ServerMessage) => {
       else if (screen.kind === "results" && performance.now() > resultsUntil && !msg.racing) go({ kind: "lobby" });
       break;
     case "race":
+      if (msg.seed !== statsSeed) {
+        // A rejoin mid-race resends "race"; keep measuring the same race.
+        net.resetStats();
+        statsSeed = msg.seed;
+        if (statsTimer) clearInterval(statsTimer);
+        statsTimer = setInterval(() => sendNetStats(false), 10_000);
+      }
       startRace({ seed: msg.seed, track: msg.track, laps: msg.laps, slots: msg.slots, you: msg.you }, false);
       break;
     case "results": {
+      sendNetStats(true);
       resultsUntil = performance.now() + 8500;
       const slot = view?.setup.you ?? -1;
       go({ kind: "results", results: msg.results, slot, practice: false });
@@ -381,6 +403,7 @@ const loop = (now: number) => {
   if (view) view.frame(step);
   else stage.render();
   stage.recordFrame(performance.now() - start, dt);
+  if (screen.kind === "race" && !practicing) net.recordFrame(dt * 1000);
 };
 (window as unknown as { __dk: unknown }).__dk = { stage, net, get view() { return view; } };
 requestAnimationFrame(loop);

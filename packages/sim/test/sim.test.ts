@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   BoostKind, InputBit, SlowFlag, ItemKind, KARTS, Phase, THEMES, World, botInput, decodeInputs, decodeSnapshot, encodeInputs,
-  encodeSnapshot, generateTrack, makeInput, snapshotSize, targetTrackLength,
+  encodeSnapshot, GapStats, cleanNetReport, generateTrack, makeInput, snapshotSize, targetTrackLength,
 } from "../src/index.ts";
 
 const racers = (n: number) =>
@@ -266,5 +266,33 @@ describe("fun mechanics", () => {
     }
     expect(world.events.some((e) => e.type === "gpu")).toBe(true);
     expect(world.track.coins.length).toBeGreaterThan(30);
+  });
+});
+
+describe("connection stats", () => {
+  test("gap summary counts hitches and skips paused stretches", () => {
+    const gaps = new GapStats();
+    let t = 0;
+    for (let i = 0; i < 100; i++) gaps.arrive((t += 50));
+    gaps.arrive((t += 400));
+    gaps.pause();
+    gaps.arrive((t += 10_000));
+    gaps.arrive((t += 50));
+    const s = gaps.summary();
+    expect(s.n).toBe(101);
+    expect(s.p50).toBe(50);
+    expect(s.max).toBe(400);
+    expect(s.over150).toBe(1);
+    expect(s.over300).toBe(1);
+  });
+
+  test("untrusted reports are clamped", () => {
+    const r = cleanNetReport({ down: { p99: 1e12, n: "7" }, rttP50: -5, connection: "4g".repeat(50), reconnects: 1e6 })!;
+    expect(r.down.p99).toBe(600_000);
+    expect(r.down.n).toBe(7);
+    expect(r.rttP50).toBe(0);
+    expect(r.connection.length).toBe(16);
+    expect(r.reconnects).toBe(100);
+    expect(cleanNetReport("nope")).toBeNull();
   });
 });

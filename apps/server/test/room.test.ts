@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { type ServerMessage, decodeSnapshot, encodeInputs, kartField } from "@dario-kart/sim";
 import { type Conn, type PlayerInfo, RaceRoom } from "../src/room.ts";
 
@@ -138,4 +138,35 @@ describe("race lifecycle", () => {
     room.disconnect(back.conn);
     room.disconnect(first.conn);
   });
+
+  test("each racer's connection report is logged once, with server-side input gaps", () => {
+    const lines: Array<Record<string, unknown>> = [];
+    const spy = spyOn(console, "log").mockImplementation((line: string) => { lines.push(JSON.parse(line)); });
+    try {
+      const room = new RaceRoom(() => {});
+      const a = client();
+      room.connect(a.conn, "TLA6");
+      hello(room, a.conn, "Ada");
+      room.message(a.conn, JSON.stringify({ t: "start" }));
+      const race = a.messages.find((m) => m.t === "race");
+      const seed = race && race.t === "race" ? race.seed : 0;
+      const buf = new DataView(new ArrayBuffer(64));
+      for (let seq = 1; seq <= 3; seq++) {
+        const len = encodeInputs([{ seq, steer: 0, bits: 1 }], buf, seed);
+        room.message(a.conn, buf.buffer.slice(0, len));
+      }
+      const report = { down: { n: 900, p50: 50, p95: 60, p99: 210, max: 480, over150: 4, over300: 1 }, rttP50: 40, rttP95: 90, rttMax: 300,
+        longFrames: 2, frames: 3300, reconnects: 0, hiddenMs: 0, connection: "4g" };
+      room.message(a.conn, JSON.stringify({ t: "netStats", seed, final: false, report }));
+      expect(lines.filter((l) => l.event === "net_stats")).toHaveLength(0);
+      // Dropping mid-race still logs the last running report.
+      room.disconnect(a.conn, 1006, "network");
+      const logged = lines.filter((l) => l.event === "net_stats");
+      expect(logged).toHaveLength(1);
+      expect(logged[0]).toMatchObject({ seed, why: "left", down: { p99: 210 }, up: { n: 2 } });
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
+
