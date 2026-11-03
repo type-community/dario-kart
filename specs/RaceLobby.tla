@@ -27,6 +27,7 @@ VARIABLES
   joinOrder,    \* server: Seq of members in join order; Head = host
   race,         \* server: number of the current/last race
   racers,       \* server: members holding a slot in the current race
+  seats,        \* server: everyone who started the current race, connected or not
   lastSeq,      \* server: last input seq accepted per player
   evictions,    \* bound on how often the object resets
   conn,         \* client: socket open
@@ -38,9 +39,9 @@ VARIABLES
   toClient,     \* FIFO server -> client
   toServer      \* FIFO client -> server (inputs only)
 
-vars == <<phase, joinOrder, race, racers, lastSeq, evictions, conn, screen,
+vars == <<phase, joinOrder, race, racers, seats, lastSeq, evictions, conn, screen,
           lobbyRacing, timerDone, viewRace, viewSeq, toClient, toServer>>
-serverVars == <<phase, joinOrder, race, racers, lastSeq, evictions>>
+serverVars == <<phase, joinOrder, race, racers, seats, lastSeq, evictions>>
 clientVars == <<conn, screen, lobbyRacing, timerDone, viewRace, viewSeq>>
 
 Members == {joinOrder[i] : i \in 1..Len(joinOrder)}
@@ -51,7 +52,7 @@ Results == [type |-> "results"]
 Broadcast(qs, m, to) == [c \in Clients |-> IF c \in to THEN Append(qs[c], m) ELSE qs[c]]
 
 Init ==
-  /\ phase = "lobby" /\ joinOrder = <<>> /\ race = 0 /\ racers = {}
+  /\ phase = "lobby" /\ joinOrder = <<>> /\ race = 0 /\ racers = {} /\ seats = {}
   /\ lastSeq = [c \in Clients |-> 0] /\ evictions = 0
   /\ conn = [c \in Clients |-> FALSE]
   /\ screen = [c \in Clients |-> "landing"]
@@ -64,20 +65,25 @@ Init ==
 
 (* --------------------------- server actions ---------------------------- *)
 
-\* Socket opens and the server handles "hello": lobby to everyone, and a
-\* spectator race message if a race is running.
+\* Socket opens (a first visit or a reconnect) and the server handles "hello":
+\* lobby to everyone, and a race message if a race is running. Someone who
+\* started this race gets their seat back with a fresh input queue; anyone
+\* else spectates.
 Join(c) ==
   /\ ~conn[c]
   /\ conn' = [conn EXCEPT ![c] = TRUE]
   /\ joinOrder' = Append(joinOrder, c)
-  /\ LET q == Broadcast(toClient, Lobby(phase = "racing"), Members \cup {c})
-     IN toClient' = IF phase = "racing" THEN [q EXCEPT ![c] = Append(@, RaceMsg(race, FALSE))] ELSE q
-  /\ UNCHANGED <<phase, race, racers, lastSeq, evictions, screen, lobbyRacing, timerDone, viewRace, viewSeq, toServer>>
+  /\ LET rejoin == phase = "racing" /\ c \in seats
+         q == Broadcast(toClient, Lobby(phase = "racing"), Members \cup {c})
+     IN /\ toClient' = IF phase = "racing" THEN [q EXCEPT ![c] = Append(@, RaceMsg(race, rejoin))] ELSE q
+        /\ racers' = IF rejoin THEN racers \cup {c} ELSE racers
+        /\ lastSeq' = IF rejoin THEN [lastSeq EXCEPT ![c] = 0] ELSE lastSeq
+  /\ UNCHANGED <<phase, race, seats, evictions, screen, lobbyRacing, timerDone, viewRace, viewSeq, toServer>>
 
 \* Host presses Start: new race, queues cleared, race + lobby(racing) to all.
 Start(c) ==
   /\ phase = "lobby" /\ Host = c /\ race < MaxRaces
-  /\ phase' = "racing" /\ race' = race + 1 /\ racers' = Members
+  /\ phase' = "racing" /\ race' = race + 1 /\ racers' = Members /\ seats' = Members
   /\ lastSeq' = [x \in Clients |-> IF x \in Members THEN 0 ELSE lastSeq[x]]
   /\ toClient' = [x \in Clients |->
         IF x \in Members THEN toClient[x] \o <<RaceMsg(race + 1, TRUE), Lobby(TRUE)>> ELSE toClient[x]]
@@ -85,7 +91,7 @@ Start(c) ==
 
 Finish ==
   /\ phase = "racing"
-  /\ phase' = "results" /\ racers' = {}
+  /\ phase' = "results" /\ racers' = {} /\ seats' = {}
   /\ toClient' = Broadcast(toClient, Results, Members)
   /\ UNCHANGED <<joinOrder, race, lastSeq, evictions, clientVars, toServer>>
 
@@ -94,7 +100,7 @@ ResultsOver ==
   /\ phase = "results"
   /\ phase' = "lobby"
   /\ toClient' = Broadcast(toClient, Lobby(FALSE), Members)
-  /\ UNCHANGED <<joinOrder, race, racers, lastSeq, evictions, clientVars, toServer>>
+  /\ UNCHANGED <<joinOrder, race, racers, seats, lastSeq, evictions, clientVars, toServer>>
 
 \* An input packet arrives. Without the fix the queue keeps any seq higher
 \* than the last one it took; with the fix packets carry their race number
@@ -110,13 +116,13 @@ ServerInput(c) ==
        /\ IF FIX /\ phase # "racing" /\ c \in Members
             THEN toClient' = [toClient EXCEPT ![c] = Append(@, Lobby(FALSE))]
             ELSE UNCHANGED toClient
-  /\ UNCHANGED <<phase, joinOrder, race, racers, evictions, clientVars>>
+  /\ UNCHANGED <<phase, joinOrder, race, racers, seats, evictions, clientVars>>
 
 \* Durable Object reset: memory gone, sockets restored from attachments.
 Evict ==
   /\ evictions < MaxEvictions
   /\ evictions' = evictions + 1
-  /\ phase' = "lobby" /\ racers' = {}
+  /\ phase' = "lobby" /\ racers' = {} /\ seats' = {}
   /\ lastSeq' = [c \in Clients |-> 0]
   \* Fix: the restored object tells every restored socket where things stand.
   /\ toClient' = IF FIX THEN Broadcast(toClient, Lobby(FALSE), Members) ELSE toClient
@@ -178,15 +184,21 @@ Leave(c) ==
   /\ racers' = racers \ {c}
   /\ LET left == {joinOrder[i] : i \in 1..Len(joinOrder)} \ {c}
          cleared == [toClient EXCEPT ![c] = <<>>]
-     IN IF left = {} /\ phase = "racing"
-          THEN /\ phase' = "lobby" /\ toClient' = cleared
-          ELSE /\ phase' = phase /\ toClient' = Broadcast(cleared, Lobby(phase = "racing"), left)
+     IN /\ phase' = phase
+        /\ seats' = seats
+        /\ toClient' = Broadcast(cleared, Lobby(phase = "racing"), left)
   /\ toServer' = [toServer EXCEPT ![c] = <<>>]
   /\ UNCHANGED <<race, lastSeq, evictions, lobbyRacing>>
 
+\* Nobody came back within 30 s of the last player dropping: the race is thrown away.
+Abandon ==
+  /\ phase = "racing" /\ Members = {}
+  /\ phase' = "lobby" /\ racers' = {} /\ seats' = {}
+  /\ UNCHANGED <<joinOrder, race, lastSeq, evictions, clientVars, toClient, toServer>>
+
 Next ==
   \/ \E c \in Clients : Join(c) \/ Start(c) \/ ServerInput(c) \/ ClientRecv(c) \/ ClientInput(c) \/ ClientTimer(c) \/ Leave(c)
-  \/ Finish \/ ResultsOver \/ Evict
+  \/ Finish \/ ResultsOver \/ Evict \/ Abandon
 
 Spec == Init /\ [][Next]_vars
 

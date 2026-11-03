@@ -1,6 +1,6 @@
 # Formal specs
 
-`RaceLobby.tla` models the lobby and race lifecycle across the server (`apps/server/src/room.ts`, one Durable Object per lobby) and each browser (`apps/web/src/main.ts`, `game.ts`): joins and leaves, host start, results timers, client screens, FIFO WebSocket channels in both directions, race-tagged inputs with sequence numbers, and Cloudflare resetting the object (in-memory state lost, sockets restored).
+`RaceLobby.tla` models the lobby and race lifecycle across the server (`apps/server/src/room.ts`, one Durable Object per lobby) and each browser (`apps/web/src/main.ts`, `game.ts`): joins and leaves (including reconnecting mid-race and getting your seat back, and races abandoned when everyone drops), host start, results timers, client screens, FIFO WebSocket channels in both directions, race-tagged inputs with sequence numbers, and Cloudflare resetting the object (in-memory state lost, sockets restored).
 
 `FIX = FALSE` describes the code before the fixes; `FIX = TRUE` describes the code now.
 

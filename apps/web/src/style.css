@@ -1748,3 +1748,7 @@ button {
     transition: none;
   }
 }
+
+.notice.reconnecting {
+  border-left-color: var(--hazard);
+}

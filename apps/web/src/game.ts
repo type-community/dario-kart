@@ -242,9 +242,7 @@ export class RaceView {
       sound.setIntense(false);
 
     }
-    if (mode.kind === "online") {
-      mode.net.onSnapshot = (snap) => this.onSnapshot(snap);
-    }
+    if (mode.kind === "online") mode.net.onSnapshot = this.snapshotHandler;
     if (controls) controls.enabled = setup.you >= 0;
   }
 
@@ -332,6 +330,8 @@ export class RaceView {
       this.outbox.length = 0;
     }
   }
+
+  private readonly snapshotHandler = (snap: DecodedSnapshot) => this.onSnapshot(snap);
 
   private onSnapshot(snap: DecodedSnapshot): void {
     const now = performance.now() / 1000;
@@ -866,7 +866,8 @@ export class RaceView {
       (m.material as THREE.Material).dispose();
     }
     this.resetWall.texture.dispose();
-    if (this.mode.kind === "online") this.mode.net.onSnapshot = () => {};
+    // Only unhook our own handler: on a reconnect the replacement view is already attached.
+    if (this.mode.kind === "online" && this.mode.net.onSnapshot === this.snapshotHandler) this.mode.net.onSnapshot = () => {};
     if (this.controls) this.controls.enabled = false;
   }
 }
