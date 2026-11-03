@@ -240,7 +240,7 @@ export class RaceView {
     if (mode.kind !== "attract") {
       sound.startMusic(setup.track);
       sound.setIntense(false);
-      if (setup.you >= 0) sound.startEngine();
+
     }
     if (mode.kind === "online") {
       mode.net.onSnapshot = (snap) => this.onSnapshot(snap);
@@ -305,7 +305,6 @@ export class RaceView {
     const name = (slot: number) => (slot === this.setup.you ? "You" : this.setup.slots[slot]?.name ?? "Someone");
     if (event.type === "hit" && event.by >= 0 && event.by !== event.victim) {
       this.hud.feed(event.cause === "missile" ? `${name(event.by)} hit ${name(event.victim)}` : `${name(event.by)} steamrolled ${name(event.victim)}`);
-      if (event.victim === this.setup.you) this.status("Outage!", true);
     } else if (event.type === "use" && event.item === 4) {
       this.hud.feed(`${name(event.slot)} triggered The Reset`);
     } else if (event.type === "finish") {
@@ -442,7 +441,7 @@ export class RaceView {
       point.copy(v.root.position);
       v.apply({
         speed: kart.speed, boostT: kart.boostT, agiT: kart.agiT, bulletT: kart.bulletT, stunT: kart.stunT,
-        drifting: kart.drifting, driftCharge: kart.driftCharge, hiccupT: kart.hiccupT, trickT: kart.trickT, slip: r.slip, time: this.time,
+        drifting: kart.drifting, driftCharge: kart.driftCharge, trickT: kart.trickT, slip: r.slip, time: this.time,
         showLabel: this.mode.kind !== "attract" && i !== you && point.distanceToSquared(this.stage.camera.position) > 144,
       });
     }
@@ -699,7 +698,7 @@ export class RaceView {
       hud.wrongWay(false);
     }
     const throttle = (this.inputs[me.slot].bits & 1) !== 0;
-    sound.updateEngine(me.speed, throttle, me.boostT > 0, me.drifting > 0, me.z > 0.3, me.hiccupT > 0 && me.hiccupT <= 0.45);
+    sound.updateSpeed(me.speed, me.boostT > 0);
   }
 
   private drawSpeedLines(): void {
@@ -805,15 +804,6 @@ export class RaceView {
     if (this.time < this.statusUntil) {
       status = this.statusText;
       bad = this.statusBad;
-    } else if (focus.stunT > 0) {
-      status = "Outage!";
-      bad = true;
-    } else if (focus.slickT > 0) {
-      status = "Context overloaded";
-      bad = true;
-    } else if (focus.inReset) {
-      status = "Swallowed by The Reset";
-      bad = true;
     } else if (focus.bulletT > 0) {
       status = "Nerf Bullet";
     } else if (focus.agiT > 0) {
@@ -847,7 +837,7 @@ export class RaceView {
       driftCharge: focus.driftCharge,
       boostKind: focus.boostKind,
       itemRollT: focus.itemRollT,
-      hiccupT: focus.hiccupT,
+      slowFlags: focus.slowFlags,
       kartModel: focus.kartModel,
       gpus: focus.gpus,
       draftCharge: focus.draftCharge,
@@ -862,7 +852,7 @@ export class RaceView {
     this.sparks.dispose();
     this.confetti.dispose();
     if (this.mode.kind !== "attract") {
-      sound.stopEngine();
+
       sound.stopMusic();
     }
     if (this.speedLines) this.speedLines.getContext("2d")?.clearRect(0, 0, this.speedLines.width, this.speedLines.height);

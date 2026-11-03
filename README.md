@@ -66,7 +66,7 @@ alchemy.run.ts    the whole stack: game Worker + Vite site
 - Every track sample carries a full 3D frame, so roads climb, crest, bank into corners and loop. The physics only needs yaw curvature, pitch curvature, slope and a loop flag; crests launch you when you're fast enough, loops hold you on.
 - Kart stats are tuned with `scripts/balance.ts` (constants in `STAT` in `world.ts`): every kart's average finish is within about 0.05 of even across hundreds of bot races.
 - The server is authoritative. Clients predict their own kart, replay unacknowledged inputs on each snapshot, and render other karts about 115 ms in the past.
-- Tracks get longer and wider with more racers: 2 players get about 1.7 km, 30 get about 3.4 km, 100 get about 5.4 km.
+- Races are 2 laps and about 50 seconds. Tracks get a little longer and wider with more racers (about 1.3 km for 8 players, 1.6 km for 30, 2.1 km for 100).
 - Item odds depend on race position. The Nerf Bullet only goes to the back 15% of a 4+ kart race when they're more than 250 m behind the leader.
 - Accounts are ephemeral: a random id and your picks live in `localStorage`.
 

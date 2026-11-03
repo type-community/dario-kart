@@ -8,7 +8,14 @@ import { DT, type Kart, Phase, type World } from "./world.ts";
  * Track-following AI. Used for bot racers, for humans after they finish, and
  * by the headless tests that check every generated track is drivable.
  */
-export const botInput = (world: World, kart: Kart, out: Input, skill = 0.94): Input => {
+export const botInput = (world: World, kart: Kart, out: Input, skillOverride?: number): Input => {
+  let skill = skillOverride ?? kart.botSkill;
+  // Bots well ahead of every human ease off, so races against bots stay winnable.
+  if (skillOverride === undefined && kart.bot) {
+    let bestHuman = -Infinity;
+    for (const k of world.karts) if (!k.bot) bestHuman = Math.max(bestHuman, k.dist);
+    if (bestHuman > -Infinity && kart.dist - bestHuman > 60) skill *= 0.9;
+  }
   const track = world.track;
   if (world.phase === Phase.Countdown) {
     out.steer = 0;

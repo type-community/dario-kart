@@ -53,13 +53,13 @@ export const KARTS: ReadonlyArray<KartModel> = [
     id: "claude", name: "Claude", color: 0xd97757, accent: 0xf5e6d8,
     speed: 6, handling: 8, reliability: 9, durability: 5,
     perk: "constitutional", perkName: "Constitutional",
-    perkText: "Never hiccups. Context Overload Oil only half affects you.",
+    perkText: "Context Overload Oil only half affects you.",
   },
   {
     id: "grok", name: "Grok", color: 0x111111, accent: 0xe6e6e6,
     speed: 10, handling: 5, reliability: 4, durability: 9,
     perk: "unhinged", perkName: "Unhinged",
-    perkText: "Boosts hit 15% harder. Occasionally goes off-script.",
+    perkText: "Boosts hit 15% harder.",
   },
   {
     id: "gippity", name: "Gippity", color: 0x10a37f, accent: 0xffffff,

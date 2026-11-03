@@ -99,6 +99,31 @@ const chevronTexture = (color: string, back: string, forward: boolean) =>
     ctx.restore();
   });
 
+/** Slow zones must read as bad at a glance: red and black stripes, a stencil, arrows pointing back. */
+const slowZoneTexture = () =>
+  canvasTexture(128, 256, (ctx) => {
+    ctx.fillStyle = "#1a0006";
+    ctx.fillRect(0, 0, 128, 256);
+    ctx.fillStyle = "#e0102f";
+    for (let i = -256; i < 384; i += 40) {
+      ctx.beginPath();
+      ctx.moveTo(0, i);
+      ctx.lineTo(128, i + 64);
+      ctx.lineTo(128, i + 84);
+      ctx.lineTo(0, i + 20);
+      ctx.fill();
+    }
+    ctx.save();
+    ctx.translate(64, 128);
+    ctx.rotate(Math.PI);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "900 44px 'Barlow Condensed', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("SLOW", 0, 0);
+    ctx.restore();
+  });
+
 const hazardTexture = () =>
   canvasTexture(64, 64, (ctx) => {
     ctx.fillStyle = "#ffc93c";
@@ -326,9 +351,10 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
   group.add(gantry);
 
   const boostTex = keep(chevronTexture("#3de0ff", "rgba(17,20,42,0.85)", true));
-  const slowTex = keep(chevronTexture("#ff3d7f", "rgba(17,20,42,0.85)", false));
+  const slowTex = keep(slowZoneTexture());
   const boostMat = keep(new THREE.MeshBasicMaterial({ map: boostTex, transparent: true }));
-  const slowMat = keep(new THREE.MeshBasicMaterial({ map: slowTex, transparent: true }));
+  const slowEdgeMat = keep(new THREE.MeshBasicMaterial({ color: 0xff1a3d, side: THREE.DoubleSide }));
+  const slowMat = keep(new THREE.MeshBasicMaterial({ map: slowTex }));
   const rampTex = keep(hazardTexture());
   rampTex.repeat.set(4, 1);
   const rampMat = keep(new THREE.MeshStandardMaterial({ map: rampTex, roughness: 0.6, side: THREE.DoubleSide }));
@@ -337,13 +363,20 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
   }));
   const bumperGeo = keep(new THREE.CylinderGeometry(1.3, 1.5, 1.6, 20));
   const bumperRingGeo = keep(new THREE.TorusGeometry(1.3, 0.18, 8, 24));
-  const bumperMat = keep(new THREE.MeshStandardMaterial({ color: 0xff3d7f, emissive: 0xff3d7f, emissiveIntensity: 0.6, roughness: 0.3 }));
+  const bumperMat = keep(new THREE.MeshStandardMaterial({ color: 0x3de0ff, emissive: 0x3de0ff, emissiveIntensity: 0.6, roughness: 0.3 }));
   const ringMat = keep(new THREE.MeshBasicMaterial({ color: 0xffc93c }));
   const bumpers: Array<{ mesh: THREE.Group; s: number; d: number; pulse: number }> = [];
 
   for (const f of track.features) {
     if (f.kind === FeatureKind.Boost || f.kind === FeatureKind.Slow) {
       const tex = f.kind === FeatureKind.Boost ? boostMat : slowMat;
+      if (f.kind === FeatureKind.Slow) {
+        // Raised red edges so it reads as a hazard from a distance, not just a texture.
+        for (const side of [-1, 1]) {
+          const e = f.d + side * f.halfWidth;
+          addStatic(strip(track, f.s, f.s + f.length, 1, 4, () => side > 0 ? [e, 0.06, e, 0.5] : [e, 0.5, e, 0.06]), slowEdgeMat);
+        }
+      }
       addStatic(
         strip(track, f.s, f.s + f.length, 1, f.halfWidth * 2, () => [f.d - f.halfWidth, 0.06, f.d + f.halfWidth, 0.06]),
         tex,
@@ -562,7 +595,6 @@ export interface KartFx {
   stunT: number;
   drifting: number;
   driftCharge: number;
-  hiccupT: number;
   trickT: number;
   slip: number;
   time: number;
@@ -644,12 +676,9 @@ export class KartVisual {
     this.body.rotation.x = 0;
     if (state.trickT > 0) this.body.rotation.z = (1 - state.trickT / 0.45) * Math.PI * 2;
 
-    // Rate limit: exhaust flickers amber during the warning, dies and smokes when the engine cuts.
-    const cut = state.hiccupT > 0 && state.hiccupT <= 0.45;
-    const warn = state.hiccupT > 0.45;
-    this.glow.color.setHex(cut ? 0x222222 : warn ? (Math.sin(state.time * 30) > 0 ? 0xffc93c : 0x553300) : state.boostT > 0 ? 0xffffff : 0x3de0ff);
-    this.smoke.visible = cut;
-    if (cut) this.smoke.scale.setScalar(1 + Math.sin(state.time * 20) * 0.3);
+    this.glow.color.setHex(state.boostT > 0 ? 0xffffff : 0x3de0ff);
+    this.smoke.visible = state.stunT > 0;
+    if (this.smoke.visible) this.smoke.scale.setScalar(1 + Math.sin(state.time * 20) * 0.3);
 
     const charge = state.driftCharge;
     const tier = charge >= 2.3 ? 3 : charge >= 1.4 ? 2 : charge >= 0.7 ? 1 : 0;
@@ -679,11 +708,14 @@ export const makeMissileMesh = (): THREE.Mesh =>
 export const makeOilMesh = (): THREE.Mesh => {
   const mesh = new THREE.Mesh(
     new THREE.CircleGeometry(3.4, 28).rotateX(-Math.PI / 2),
-    new THREE.MeshStandardMaterial({
-      color: 0x2a1240, roughness: 0.05, metalness: 0.9, emissive: 0x5a1e8a, emissiveIntensity: 0.35,
-      transparent: true, opacity: 0.9,
-    }),
+    new THREE.MeshStandardMaterial({ color: 0x050507, roughness: 0.05, metalness: 0.9 }),
   );
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(3.2, 3.9, 32).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0xff1a3d, side: THREE.DoubleSide }),
+  );
+  ring.position.y = 0.02;
+  mesh.add(ring);
   return mesh;
 };
 
