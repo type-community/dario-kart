@@ -72,7 +72,7 @@ alchemy.run.ts    the whole stack: game Worker + Vite site
 
 ## Deploying
 
-Merging to `main` deploys: `.github/workflows/deploy.yml` runs after CI passes and ships the `prod` stage to [dariokart.type.com](https://dariokart.type.com). It needs two repo secrets, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+Merging to `main` deploys: `.github/workflows/deploy.yml` runs after CI passes and ships the `prod` stage to [dariokart.type.com](https://dariokart.type.com). It needs two repo secrets, `CLOUDFLARE_API_TOKEN` (the "dario-kart GitHub Actions deploy" account token: Workers Scripts, Secrets Store and Account Settings on the account; Workers Routes, DNS and Zone on `type.com`) and `CLOUDFLARE_ACCOUNT_ID`. Pull requests also run `alchemy plan --stage prod`, so you can see what a merge would ship.
 
 To deploy by hand:
 
