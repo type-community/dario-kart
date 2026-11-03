@@ -74,4 +74,40 @@ describe("race lifecycle", () => {
     expect(kartField(snap.karts, 0, "speed")).toBeGreaterThan(10);
     room.disconnect(a.conn);
   });
+
+  test("a player who drops mid-race gets their kart back on reconnect", () => {
+    const room = new RaceRoom(() => {});
+    const first = client();
+    room.connect(first.conn, "TLA3");
+    hello(room, first.conn, "Ada");
+    room.message(first.conn, JSON.stringify({ t: "start" }));
+    const race = first.messages.find((m) => m.t === "race");
+    expect(race && race.t === "race" && race.you).toBe(0);
+
+    room.disconnect(first.conn, 1006, "network");
+    const second = client();
+    room.connect(second.conn, "TLA3");
+    hello(room, second.conn, "Ada");
+    const again = second.messages.find((m) => m.t === "race");
+    expect(again && again.t === "race" && again.you).toBe(0);
+    room.disconnect(second.conn);
+  });
+
+  test("a newer connection takes the seat from a half-open old one", () => {
+    const room = new RaceRoom(() => {});
+    let oldClosed = 0;
+    const old = client();
+    old.conn.close = (code) => { oldClosed = code; };
+    room.connect(old.conn, "TLA4");
+    hello(room, old.conn, "Ada");
+    room.message(old.conn, JSON.stringify({ t: "start" }));
+    const fresh = client();
+    room.connect(fresh.conn, "TLA4");
+    hello(room, fresh.conn, "Ada");
+    const race = fresh.messages.find((m) => m.t === "race");
+    expect(race && race.t === "race" && race.you).toBe(0);
+    expect(oldClosed).toBe(4000);
+    room.disconnect(fresh.conn);
+    room.disconnect(old.conn);
+  });
 });

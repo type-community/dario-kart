@@ -40,6 +40,19 @@ bun scripts/predict-check.ts http://localhost:1337   # client prediction error v
 bun scripts/balance.ts 240 8             # Monte-Carlo kart balance: win rate and average finish per kart
 ```
 
+## Logs
+
+The race server writes one JSON line per event to Cloudflare Workers Logs: `join` (with `rejoinedSlot` when a dropped player gets their kart back), `leave` (with the WebSocket `closeCode` and `reason`), `race_start`, `race_finish`, `race_abandoned`, `restored` (the Durable Object was reset), and `client_error` (browser errors reported by the client).
+
+```sh
+bun alchemy logs --stage prod --since 1h          # recent events
+bun alchemy logs --stage prod --tail              # stream live
+```
+
+Or open the Game Worker in the Cloudflare dashboard, under Observability, and filter on `event`.
+
+Close codes worth knowing: `1000` the player left, `1001` the browser went away (tab closed, reloaded, or the browser dropped it), `1006` the network died, `4000` replaced by a newer connection from the same player, `4001` the client gave up after no pong for 7 s. Clients reconnect automatically (5 tries over about 15 s) and get their seat back mid-race; a race with nobody connected keeps running for 30 s before it's abandoned.
+
 ## Formal verification
 
 `specs/RaceLobby.tla` models the lobby/race lifecycle, including Cloudflare resetting a Durable Object mid-race. TLC found two real bugs (a stranded race screen after a reset, and stale inputs locking a player out of the next race); both are fixed and the fixed model checks clean across 10.5M states. See [specs/README.md](specs/README.md).

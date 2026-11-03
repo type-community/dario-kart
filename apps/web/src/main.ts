@@ -164,10 +164,42 @@ const join = (code: string, pushHistory = true) => {
   net.connect(clean, hello());
 };
 
-net.onClose = (reason) => goHome(`${reason} Check the code and try again.`, false);
+net.onClose = (reason) => {
+  hideReconnecting();
+  goHome(`${reason} Check your connection and try again.`, false);
+};
+
+let reconnectBanner: HTMLElement | null = null;
+const hideReconnecting = () => {
+  reconnectBanner?.remove();
+  reconnectBanner = null;
+};
+net.onReconnecting = (attempt) => {
+  if (!reconnectBanner) {
+    reconnectBanner = document.createElement("div");
+    reconnectBanner.className = "notice reconnecting";
+    reconnectBanner.setAttribute("role", "status");
+    document.body.append(reconnectBanner);
+  }
+  reconnectBanner.textContent = attempt === 1 ? "Connection dropped. Reconnecting…" : `Still reconnecting (try ${attempt})…`;
+};
+net.onReconnected = () => {
+  hideReconnecting();
+  notice("Reconnected.");
+};
+
+// Browser errors go to the race server's logs so we can see what players hit.
+let errorsSent = 0;
+const reportError = (message: string, stack?: string) => {
+  if (errorsSent++ >= 10) return;
+  net.send({ t: "clientError", message, stack, context: screen.kind });
+};
+window.addEventListener("error", (e) => reportError(e.message, e.error?.stack));
+window.addEventListener("unhandledrejection", (e) => reportError(String(e.reason?.message ?? e.reason), e.reason?.stack));
 
 const sendPick = () => {
   saveProfile();
+  net.updateHello(hello());
   net.send({ t: "pick", character: profile.character, kart: profile.kart, primary: profile.primary, secondary: profile.secondary });
   if (screen.kind === "lobby") go({ kind: "lobby" });
 };
@@ -346,7 +378,7 @@ const loop = (now: number) => {
   else stage.render();
   stage.recordFrame(performance.now() - start, dt);
 };
-(window as unknown as { __dk: unknown }).__dk = { stage, get view() { return view; } };
+(window as unknown as { __dk: unknown }).__dk = { stage, net, get view() { return view; } };
 requestAnimationFrame(loop);
 
 const params = new URLSearchParams(location.search);

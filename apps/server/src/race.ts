@@ -61,11 +61,11 @@ export default class Race extends Cloudflare.DurableObject<Race>()(
           room.message(connFor(socket.ws), message);
         }),
         webSocketClose: Effect.fn(function* (socket: Cloudflare.WebSocket, code: number, reason: string) {
-          room.disconnect(connFor(socket.ws));
+          room.disconnect(connFor(socket.ws), code, reason);
           yield* socket.close(code, reason);
         }),
-        webSocketError: Effect.fn(function* (socket: Cloudflare.WebSocket) {
-          room.disconnect(connFor(socket.ws));
+        webSocketError: Effect.fn(function* (socket: Cloudflare.WebSocket, error: unknown) {
+          room.disconnect(connFor(socket.ws), 1006, `socket error: ${String(error).slice(0, 200)}`);
         }),
       };
     });

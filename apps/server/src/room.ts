@@ -30,6 +30,8 @@ const MAX_BOTS = 60;
 const SNAPSHOT_EVERY = 3;
 const RESULTS_MS = 9000;
 const MAX_RACE_TICKS = 15 * 60 * TICK_RATE;
+/** How long a race with nobody connected keeps running, waiting for a reconnect. */
+const ABANDON_MS = 30_000;
 const QUEUE_SIZE = 32;
 
 class InputQueue {
@@ -85,7 +87,13 @@ interface Player {
   slot: number;
   lastEmote: number;
   lastNudge: number;
+  errorsLogged: number;
 }
+
+/** One JSON line per event; Cloudflare Workers Logs indexes the fields. */
+const log = (event: string, fields: Record<string, unknown>): void => {
+  console.log(JSON.stringify({ event, ...fields }));
+};
 
 const clampName = (name: unknown): string =>
   (typeof name === "string" ? name : "").replace(/[^\p{L}\p{N} _.-]/gu, "").trim().slice(0, 16) || "Racer";
@@ -109,6 +117,7 @@ export class RaceRoom {
   private accumulator = 0;
   private snapshotBuffer = new ArrayBuffer(64 * 1024);
   private resultsTimer: ReturnType<typeof setTimeout> | null = null;
+  private abandonTimer: ReturnType<typeof setTimeout> | null = null;
   private joinCounter = 0;
 
   constructor(private readonly persist: (conn: Conn, info: PlayerInfo) => void) {}
@@ -121,7 +130,7 @@ export class RaceRoom {
   restore(conn: Conn, info: PlayerInfo | null, code: string): void {
     if (!info) return;
     this.code ||= code;
-    this.players.set(conn, { conn, info, joinedAt: this.joinCounter++, queue: new InputQueue(), slot: -1, lastEmote: 0, lastNudge: 0 });
+    this.players.set(conn, { conn, info, joinedAt: this.joinCounter++, queue: new InputQueue(), slot: -1, lastEmote: 0, lastNudge: 0, errorsLogged: 0 });
   }
 
   connect(conn: Conn, code: string): void {
@@ -131,13 +140,28 @@ export class RaceRoom {
     }
   }
 
-  disconnect(conn: Conn): void {
+  disconnect(conn: Conn, code?: number, reason?: string): void {
     const player = this.players.get(conn);
     this.players.delete(conn);
     if (!player) return;
+    log("leave", {
+      code: this.code, player: player.info.id, name: player.info.name, closeCode: code, reason,
+      phase: this.world ? "racing" : this.resultsTimer ? "results" : "lobby", slot: player.slot,
+      tick: this.world?.tick, remaining: this.players.size,
+    });
     if (player.slot >= 0 && this.slotPlayers[player.slot] === player) this.slotPlayers[player.slot] = null;
-    if (this.players.size === 0) this.stopRace();
-    else this.broadcastLobby();
+    if (this.players.size > 0) {
+      this.broadcastLobby();
+    } else if (this.world && !this.abandonTimer) {
+      // Everyone dropped: give them time to reconnect before throwing the race away.
+      this.abandonTimer = setTimeout(() => {
+        this.abandonTimer = null;
+        if (this.players.size === 0 && this.world) {
+          log("race_abandoned", { code: this.code, seed: this.world.seed });
+          this.stopRace();
+        }
+      }, ABANDON_MS);
+    }
   }
 
   message(conn: Conn, data: string | ArrayBuffer): void {
@@ -180,12 +204,19 @@ export class RaceRoom {
         info.primary = validColor(msg.primary, kartById(info.kart).color);
         info.secondary = validColor(msg.secondary, kartById(info.kart).accent);
         if (!existing) {
-          this.players.set(conn, { conn, info, joinedAt: this.joinCounter++, queue: new InputQueue(), slot: -1, lastEmote: 0, lastNudge: 0 });
+          this.players.set(conn, { conn, info, joinedAt: this.joinCounter++, queue: new InputQueue(), slot: -1, lastEmote: 0, lastNudge: 0, errorsLogged: 0 });
         }
         this.persist(conn, info);
+        const player = this.players.get(conn)!;
+        if (this.abandonTimer) {
+          clearTimeout(this.abandonTimer);
+          this.abandonTimer = null;
+        }
+        const rejoined = !existing && this.world ? this.reattach(player) : -1;
+        log(existing ? "hello" : "join", { code: this.code, player: info.id, name: info.name, racing: this.racing, rejoinedSlot: rejoined, players: this.players.size });
         this.broadcastLobby();
         if (this.world) {
-          this.send(conn, { t: "race", seed: this.world.seed, track: this.world.track.theme, laps: this.world.laps, slots: this.slots, you: -1 });
+          this.send(conn, { t: "race", seed: this.world.seed, track: this.world.track.theme, laps: this.world.laps, slots: this.slots, you: rejoined });
         }
         break;
       }
@@ -223,11 +254,44 @@ export class RaceRoom {
         this.broadcast({ t: "emote", slot: player.slot, n: Math.max(0, Math.min(3, Math.floor(Number(msg.n) || 0))) });
         break;
       }
+      case "clientError": {
+        const player = this.players.get(conn);
+        if (!player || player.errorsLogged >= 20) return;
+        player.errorsLogged++;
+        log("client_error", {
+          code: this.code, player: player.info.id, message: String(msg.message).slice(0, 500),
+          stack: typeof msg.stack === "string" ? msg.stack.slice(0, 2000) : undefined,
+          context: typeof msg.context === "string" ? msg.context.slice(0, 100) : undefined,
+        });
+        break;
+      }
       case "leave":
         this.disconnect(conn);
         conn.close(1000, "Left the lobby");
         break;
     }
+  }
+
+  /**
+   * A player who drops mid-race and comes back gets their kart back instead of
+   * spectating. If their old socket is still half-open, the new one wins.
+   */
+  private reattach(player: Player): number {
+    const slot = this.slots.findIndex((s) => !s.bot && s.id === player.info.id);
+    if (slot < 0 || this.world!.karts[slot].finished) return -1;
+    const holder = this.slotPlayers[slot];
+    if (holder && holder !== player) {
+      holder.slot = -1;
+      try {
+        holder.conn.close(4000, "Replaced by a newer connection");
+      } catch {
+        // already gone
+      }
+    }
+    player.slot = slot;
+    player.queue.clear();
+    this.slotPlayers[slot] = player;
+    return slot;
   }
 
   private isHost(conn: Conn): boolean {
@@ -265,6 +329,7 @@ export class RaceRoom {
    */
   announceRestart(): void {
     if (this.players.size === 0) return;
+    log("restored", { code: this.code, players: this.players.size });
     this.broadcastLobby();
   }
 
@@ -309,6 +374,7 @@ export class RaceRoom {
     this.lastFrame = Date.now();
     this.accumulator = 0;
     this.loop = setInterval(() => this.frame(), 1000 / TICK_RATE);
+    log("race_start", { code: this.code, seed, track: this.track, humans: humans.length, bots: botCount, length: Math.round(this.world.track.length) });
   }
 
   private stopRace(): void {
@@ -415,6 +481,11 @@ export class RaceRoom {
       };
     });
     this.sendSnapshot(world);
+    log("race_finish", {
+      code: this.code, seed: world.seed, seconds: Math.round(world.tick / TICK_RATE),
+      finished: results.filter((r) => r.time !== null).length, racers: results.length,
+      winner: results[0]?.name, players: this.players.size,
+    });
     this.stopRace();
     this.broadcast({ t: "results", results });
     this.resultsTimer = setTimeout(() => {

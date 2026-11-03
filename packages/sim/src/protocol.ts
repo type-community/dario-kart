@@ -43,7 +43,8 @@ export type ClientMessage =
   | { readonly t: "start" }
   | { readonly t: "ping"; readonly at: number }
   | { readonly t: "leave" }
-  | { readonly t: "emote"; readonly n: number };
+  | { readonly t: "emote"; readonly n: number }
+  | { readonly t: "clientError"; readonly message: string; readonly stack?: string; readonly context?: string };
 
 export type ServerMessage =
   | { readonly t: "lobby"; readonly code: string; readonly players: ReadonlyArray<LobbyPlayer>; readonly track: ThemeId; readonly bots: number; readonly racing: boolean }
