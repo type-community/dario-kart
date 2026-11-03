@@ -1,0 +1,6 @@
+node_modules
+.alchemy
+dist
+.DS_Store
+specs/tla2tools.jar
+specs/states

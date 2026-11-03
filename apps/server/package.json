@@ -1,0 +1,6 @@
+{
+  "name": "@dario-kart/server",
+  "private": true,
+  "type": "module",
+  "dependencies": { "@dario-kart/sim": "workspace:*" }
+}

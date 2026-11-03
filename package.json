@@ -1,0 +1,26 @@
+{
+  "name": "dario-kart",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy --stage prod",
+    "typecheck": "tsc -p .",
+    "test": "bun test",
+    "report": "bun scripts/race-report.ts",
+    "smoke": "bun scripts/smoke.ts"
+  },
+  "devDependencies": {
+    "@alchemy.run/cloudflare": "^2.0.0-beta.85",
+    "@effect/platform-bun": "^4.1.2",
+    "@effect/platform-node": "^4.1.2",
+    "@types/bun": "^1.4.4",
+    "alchemy": "^2.0.0-beta.85",
+    "effect": "^4.1.2",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@dario-kart/sim": "workspace:*"
+  }
+}

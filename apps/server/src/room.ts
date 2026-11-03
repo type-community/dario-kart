@@ -1,0 +1,451 @@
+import {
+  CHARACTERS, type ClientMessage, type Input, KARTS, type LobbyPlayer, Phase,
+  type RaceResult, type RaceSlot, SNAPSHOT_ACK_OFFSET, type ServerMessage, THEMES, TICK_RATE,
+  type ThemeId, World, botInput, characterIndex, decodeInputs, encodeSnapshot, kartIndex,
+  kartById, makeInput, snapshotSize, validColor,
+} from "@dario-kart/sim";
+
+/**
+ * One race lobby: who's here, the current race, and the 60 Hz loop. Plain
+ * TypeScript with no Cloudflare or Effect imports, so it can be tested
+ * headlessly or moved to another host without changes.
+ */
+
+export interface Conn {
+  send(data: string | ArrayBuffer): void;
+  close(code: number, reason: string): void;
+}
+
+export interface PlayerInfo {
+  readonly id: string;
+  name: string;
+  character: string;
+  kart: string;
+  primary: number;
+  secondary: number;
+}
+
+const MAX_RACERS = 100;
+const MAX_BOTS = 60;
+const SNAPSHOT_EVERY = 3;
+const RESULTS_MS = 9000;
+const MAX_RACE_TICKS = 15 * 60 * TICK_RATE;
+const QUEUE_SIZE = 32;
+
+class InputQueue {
+  private readonly ring: Input[] = Array.from({ length: QUEUE_SIZE }, makeInput);
+  private head = 0;
+  private size = 0;
+  readonly last: Input = makeInput();
+
+  push(seq: number, steer: number, bits: number): void {
+    if (seq <= this.last.seq && this.size === 0) return;
+    if (this.size === QUEUE_SIZE) {
+      this.head = (this.head + 1) % QUEUE_SIZE;
+      this.size--;
+    }
+    const slot = this.ring[(this.head + this.size) % QUEUE_SIZE];
+    slot.seq = seq;
+    slot.steer = steer;
+    slot.bits = bits;
+    this.size++;
+  }
+
+  /** Next input for this tick. Holds the last input when the client is late; skips ahead when it's far behind. */
+  take(): Input {
+    while (this.size > 6) {
+      this.head = (this.head + 1) % QUEUE_SIZE;
+      this.size--;
+    }
+    if (this.size > 0) {
+      const next = this.ring[this.head];
+      this.head = (this.head + 1) % QUEUE_SIZE;
+      this.size--;
+      this.last.seq = next.seq;
+      this.last.steer = next.steer;
+      this.last.bits = next.bits;
+    }
+    return this.last;
+  }
+
+  clear(): void {
+    this.head = 0;
+    this.size = 0;
+    this.last.seq = 0;
+    this.last.steer = 0;
+    this.last.bits = 0;
+  }
+}
+
+interface Player {
+  readonly conn: Conn;
+  readonly info: PlayerInfo;
+  readonly joinedAt: number;
+  readonly queue: InputQueue;
+  slot: number;
+  lastEmote: number;
+  lastNudge: number;
+}
+
+const clampName = (name: unknown): string =>
+  (typeof name === "string" ? name : "").replace(/[^\p{L}\p{N} _.-]/gu, "").trim().slice(0, 16) || "Racer";
+
+const validCharacter = (id: unknown): string =>
+  CHARACTERS.some((c) => c.id === id) ? (id as string) : CHARACTERS[0].id;
+
+const validKart = (id: unknown): string => (KARTS.some((k) => k.id === id) ? (id as string) : KARTS[0].id);
+
+export class RaceRoom {
+  private code = "";
+  private readonly players = new Map<Conn, Player>();
+  private track: ThemeId = "sf";
+  private bots = 5;
+  private world: World | null = null;
+  private slots: RaceSlot[] = [];
+  private slotPlayers: Array<Player | null> = [];
+  private inputs: Input[] = [];
+  private loop: ReturnType<typeof setInterval> | null = null;
+  private lastFrame = 0;
+  private accumulator = 0;
+  private snapshotBuffer = new ArrayBuffer(64 * 1024);
+  private resultsTimer: ReturnType<typeof setTimeout> | null = null;
+  private joinCounter = 0;
+
+  constructor(private readonly persist: (conn: Conn, info: PlayerInfo) => void) {}
+
+  get racing(): boolean {
+    return this.world !== null;
+  }
+
+  /** Re-attach sockets that survived a hibernation. The race itself is gone, so everyone lands in the lobby. */
+  restore(conn: Conn, info: PlayerInfo | null, code: string): void {
+    if (!info) return;
+    this.code ||= code;
+    this.players.set(conn, { conn, info, joinedAt: this.joinCounter++, queue: new InputQueue(), slot: -1, lastEmote: 0, lastNudge: 0 });
+  }
+
+  connect(conn: Conn, code: string): void {
+    this.code ||= code;
+    if (this.players.size >= MAX_RACERS) {
+      conn.close(1013, "Lobby full");
+    }
+  }
+
+  disconnect(conn: Conn): void {
+    const player = this.players.get(conn);
+    this.players.delete(conn);
+    if (!player) return;
+    if (player.slot >= 0 && this.slotPlayers[player.slot] === player) this.slotPlayers[player.slot] = null;
+    if (this.players.size === 0) this.stopRace();
+    else this.broadcastLobby();
+  }
+
+  message(conn: Conn, data: string | ArrayBuffer): void {
+    if (typeof data !== "string") {
+      const player = this.players.get(conn);
+      if (!player) return;
+      if (!this.world) {
+        // They're still driving a race this object no longer has (it was reset). Tell them.
+        const now = Date.now();
+        if (now - player.lastNudge > 1000) {
+          player.lastNudge = now;
+          this.send(conn, this.lobbyMessage());
+        }
+        return;
+      }
+      if (player.slot < 0) return;
+      decodeInputs(new DataView(data), this.world.seed, (seq, steer, bits) => player.queue.push(seq, steer, bits));
+      return;
+    }
+    let msg: ClientMessage;
+    try {
+      msg = JSON.parse(data) as ClientMessage;
+    } catch {
+      return;
+    }
+    switch (msg.t) {
+      case "hello": {
+        const existing = this.players.get(conn);
+        const info: PlayerInfo = existing?.info ?? {
+          id: typeof msg.id === "string" ? msg.id.slice(0, 64) : crypto.randomUUID(),
+          name: "",
+          character: "",
+          kart: "",
+          primary: 0,
+          secondary: 0,
+        };
+        info.name = clampName(msg.name);
+        info.character = validCharacter(msg.character);
+        info.kart = validKart(msg.kart);
+        info.primary = validColor(msg.primary, kartById(info.kart).color);
+        info.secondary = validColor(msg.secondary, kartById(info.kart).accent);
+        if (!existing) {
+          this.players.set(conn, { conn, info, joinedAt: this.joinCounter++, queue: new InputQueue(), slot: -1, lastEmote: 0, lastNudge: 0 });
+        }
+        this.persist(conn, info);
+        this.broadcastLobby();
+        if (this.world) {
+          this.send(conn, { t: "race", seed: this.world.seed, track: this.world.track.theme, laps: this.world.laps, slots: this.slots, you: -1 });
+        }
+        break;
+      }
+      case "pick": {
+        const player = this.players.get(conn);
+        if (!player) return;
+        player.info.character = validCharacter(msg.character);
+        player.info.kart = validKart(msg.kart);
+        player.info.primary = validColor(msg.primary, player.info.primary);
+        player.info.secondary = validColor(msg.secondary, player.info.secondary);
+        this.persist(conn, player.info);
+        this.broadcastLobby();
+        break;
+      }
+      case "settings": {
+        if (!this.isHost(conn) || this.world) return;
+        this.track = THEMES.some((t) => t.id === msg.track) ? msg.track : this.track;
+        this.bots = Math.max(0, Math.min(MAX_BOTS, Math.floor(Number(msg.bots) || 0)));
+        this.broadcastLobby();
+        break;
+      }
+      case "start": {
+        if (!this.isHost(conn) || this.world || this.resultsTimer) return;
+        this.startRace();
+        break;
+      }
+      case "ping":
+        this.send(conn, { t: "pong", at: msg.at });
+        break;
+      case "emote": {
+        const player = this.players.get(conn);
+        const now = Date.now();
+        if (!player || player.slot < 0 || !this.world || now - player.lastEmote < 1500) return;
+        player.lastEmote = now;
+        this.broadcast({ t: "emote", slot: player.slot, n: Math.max(0, Math.min(3, Math.floor(Number(msg.n) || 0))) });
+        break;
+      }
+      case "leave":
+        this.disconnect(conn);
+        conn.close(1000, "Left the lobby");
+        break;
+    }
+  }
+
+  private isHost(conn: Conn): boolean {
+    return this.host()?.conn === conn;
+  }
+
+  private host(): Player | undefined {
+    let host: Player | undefined;
+    for (const p of this.players.values()) if (!host || p.joinedAt < host.joinedAt) host = p;
+    return host;
+  }
+
+  private lobbyPlayers(): LobbyPlayer[] {
+    const host = this.host();
+    return [...this.players.values()]
+      .sort((a, b) => a.joinedAt - b.joinedAt)
+      .map((p) => ({
+        id: p.info.id, name: p.info.name, character: p.info.character, kart: p.info.kart,
+        primary: p.info.primary, secondary: p.info.secondary, host: p === host,
+      }));
+  }
+
+  private lobbyMessage(): ServerMessage {
+    return { t: "lobby", code: this.code, players: this.lobbyPlayers(), track: this.track, bots: this.bots, racing: this.racing };
+  }
+
+  private broadcastLobby(): void {
+    this.broadcast(this.lobbyMessage());
+  }
+
+  /**
+   * Called after the object is rebuilt from surviving sockets. Any race in
+   * memory is gone, so tell everyone where things stand instead of leaving
+   * them on a race screen that will never update.
+   */
+  announceRestart(): void {
+    if (this.players.size === 0) return;
+    this.broadcastLobby();
+  }
+
+  private startRace(): void {
+    const humans = [...this.players.values()].filter((p) => p.info.name).sort((a, b) => a.joinedAt - b.joinedAt);
+    const botCount = Math.min(this.bots, MAX_RACERS - humans.length);
+    this.slots = [];
+    this.slotPlayers = [];
+    humans.forEach((p, i) => {
+      p.slot = i;
+      p.queue.clear();
+      this.slots.push({
+        id: p.info.id, name: p.info.name, character: p.info.character, kart: p.info.kart,
+        primary: p.info.primary, secondary: p.info.secondary, bot: false,
+      });
+      this.slotPlayers.push(p);
+    });
+    const taken = new Set(humans.map((p) => p.info.character));
+    const pool = [...CHARACTERS].sort(() => Math.random() - 0.5).sort((a, b) => Number(taken.has(a.id)) - Number(taken.has(b.id)));
+    for (let b = 0; b < botCount; b++) {
+      const character = pool[b % pool.length];
+      const round = Math.floor(b / pool.length);
+      const kart = KARTS[Math.floor(Math.random() * KARTS.length)];
+      const name = `${character.name} Bot${round > 0 ? ` ${round + 1}` : ""}`;
+      this.slots.push({ id: `bot-${b}`, name, character: character.id, kart: kart.id, primary: kart.color, secondary: kart.accent, bot: true });
+      this.slotPlayers.push(null);
+    }
+    const seed = (Math.random() * 0xffffffff) >>> 0;
+    this.world = new World({
+      theme: this.track,
+      seed,
+      racers: this.slots.map((s) => ({ kart: kartIndex(s.kart), character: characterIndex(s.character), bot: s.bot })),
+    });
+    this.inputs = this.slots.map(() => makeInput());
+    const needed = snapshotSize(this.world) + 4096;
+    if (this.snapshotBuffer.byteLength < needed) this.snapshotBuffer = new ArrayBuffer(needed * 2);
+
+    for (const p of this.players.values()) {
+      this.send(p.conn, { t: "race", seed, track: this.track, laps: this.world.laps, slots: this.slots, you: p.slot });
+    }
+    this.broadcastLobby();
+    this.lastFrame = Date.now();
+    this.accumulator = 0;
+    this.loop = setInterval(() => this.frame(), 1000 / TICK_RATE);
+  }
+
+  private stopRace(): void {
+    if (this.loop) clearInterval(this.loop);
+    this.loop = null;
+    this.world = null;
+    for (const p of this.players.values()) p.slot = -1;
+  }
+
+  private frame(): void {
+    const world = this.world;
+    if (!world) return;
+    const now = Date.now();
+    this.accumulator += now - this.lastFrame;
+    this.lastFrame = now;
+    const tickMs = 1000 / TICK_RATE;
+    let steps = 0;
+    while (this.accumulator >= tickMs && steps < 6) {
+      this.accumulator -= tickMs;
+      steps++;
+      this.stepWorld(world);
+      if (world.tick % SNAPSHOT_EVERY === 0) this.sendSnapshot(world);
+      if (world.phase === Phase.Finished || world.tick > MAX_RACE_TICKS) {
+        this.finishRace(world);
+        return;
+      }
+    }
+    if (steps === 6) this.accumulator = 0;
+  }
+
+  private stepWorld(world: World): void {
+    for (let i = 0; i < world.karts.length; i++) {
+      const kart = world.karts[i];
+      const player = this.slotPlayers[i];
+      if (player && !kart.finished) {
+        const input = player.queue.take();
+        const target = this.inputs[i];
+        target.seq = input.seq;
+        target.steer = input.steer;
+        target.bits = input.bits;
+      } else {
+        botInput(world, kart, this.inputs[i]);
+      }
+    }
+    world.step(this.inputs);
+    if (world.events.length > 0) {
+      for (const event of world.events) {
+        const text = this.describe(event);
+        if (text) this.broadcast({ t: "event", text });
+        // Bots talk trash after landing a hit.
+        if (event.type === "hit" && this.slots[event.by]?.bot && Math.random() < 0.35) {
+          this.broadcast({ t: "emote", slot: event.by, n: Math.floor(Math.random() * 4) });
+        }
+      }
+      world.events.length = 0;
+    }
+  }
+
+  private describe(event: World["events"][number]): string | null {
+    const name = (slot: number) => this.slots[slot]?.name ?? "Someone";
+    switch (event.type) {
+      case "hit":
+        if (event.by < 0 || event.by === event.victim) return null;
+        return event.cause === "missile"
+          ? `${name(event.by)} took down ${name(event.victim)} with an Outage Missile`
+          : `${name(event.by)} steamrolled ${name(event.victim)}`;
+      case "use":
+        if (event.item === 4) return `${name(event.slot)} triggered THE RESET`;
+        if (event.item === 6) return `${name(event.slot)}: Internal AGI Achieved`;
+        if (event.item === 5) return `${name(event.slot)} fired up the Nerf Bullet`;
+        return null;
+      case "finish":
+        return `${name(event.slot)} finished ${ordinal(event.place)}`;
+      case "item":
+      case "gpu":
+        return null;
+    }
+  }
+
+  private sendSnapshot(world: World): void {
+    const view = new DataView(this.snapshotBuffer);
+    const length = encodeSnapshot(world, view);
+    const bytes = new Uint8Array(this.snapshotBuffer, 0, length);
+    for (const p of this.players.values()) {
+      view.setUint32(SNAPSHOT_ACK_OFFSET, p.slot >= 0 ? p.queue.last.seq : 0);
+      try {
+        p.conn.send(bytes.slice().buffer);
+      } catch {
+        // Socket closed mid-race; webSocketClose cleans it up.
+      }
+    }
+  }
+
+  private finishRace(world: World): void {
+    const results: RaceResult[] = world.order.map((kart) => {
+      const slot = this.slots[kart.slot];
+      return {
+        slot: kart.slot,
+        name: slot.name,
+        kart: slot.kart,
+        character: slot.character,
+        bot: slot.bot,
+        time: kart.finished ? Math.round((kart.finishTick / TICK_RATE) * 100) / 100 : null,
+      };
+    });
+    this.sendSnapshot(world);
+    this.stopRace();
+    this.broadcast({ t: "results", results });
+    this.resultsTimer = setTimeout(() => {
+      this.resultsTimer = null;
+      this.broadcastLobby();
+    }, RESULTS_MS);
+  }
+
+  private send(conn: Conn, msg: ServerMessage): void {
+    try {
+      conn.send(JSON.stringify(msg));
+    } catch {
+      // ignore closed sockets
+    }
+  }
+
+  private broadcast(msg: ServerMessage): void {
+    const text = JSON.stringify(msg);
+    for (const p of this.players.values()) {
+      try {
+        p.conn.send(text);
+      } catch {
+        // ignore closed sockets
+      }
+    }
+  }
+}
+
+const ordinal = (n: number): string => {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+};
+

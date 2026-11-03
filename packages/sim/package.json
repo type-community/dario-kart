@@ -1,0 +1,6 @@
+{
+  "name": "@dario-kart/sim",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" }
+}
