@@ -122,7 +122,7 @@ export class Hud {
       <div class="hud-draft" data-k="draft" hidden><span>Slipstream</span><i data-k="draftFill"></i></div>
       <div class="hud-emotes" data-k="emotes"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> trash talk <kbd>M</kbd> sound</div>
       <div class="hud-tips" data-k="tips" hidden>
-        <p>Press <kbd>W</kbd> right as it says 2 → 1 for a rocket start. Too early floods the engine</p>
+        <p>Press <kbd>W</kbd> right as it says 2 → 1 for a rocket start</p>
         <p>Hold <kbd>Space</kbd> while turning to drift. Sparks go blue, then pink. Let go to boost.</p>
         <p>Tap <kbd>Space</kbd> in the air to trick. Land it for a boost</p>
         <p>Grab green GPUs: each one adds top speed. Hits make you drop them</p>
@@ -215,7 +215,7 @@ export class Hud {
   private placeTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Big centered moment: final lap, rocket start, lap splits. */
-  banner(title: string, sub: string, tone: "boost" | "final" | "bad"): void {
+  banner(title: string, sub: string, tone: "boost" | "final"): void {
     const el = this.el.banner;
     this.set("bannerTitle", title);
     this.set("bannerSub", sub);

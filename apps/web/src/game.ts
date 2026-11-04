@@ -577,7 +577,6 @@ export class RaceView {
       sound.rocket(me.startResult);
       if (me.startResult === 2) hud.banner("Perfect start!", "Rocket boost", "boost");
       else if (me.startResult === 1) hud.banner("Good start", "Hit W a moment later for a perfect one", "boost");
-      else if (me.startResult === -1) hud.banner("Engine flooded", "You held W too early. Press it just before Go", "bad");
     }
     if (me.boostKind !== w.boost) {
       if (me.boostKind) {

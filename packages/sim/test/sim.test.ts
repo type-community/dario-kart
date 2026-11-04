@@ -219,9 +219,10 @@ describe("fun mechanics", () => {
     expect(perfect.startResult).toBe(2);
     expect(perfect.boostKind).toBe(BoostKind.Rocket);
     expect(countdownWith(40).startResult).toBe(1);
-    const flooded = countdownWith(170);
-    expect(flooded.startResult).toBe(-1);
-    expect(flooded.stunT).toBeGreaterThan(0);
+    // Holding the throttle through the whole countdown is a normal start, not a stall.
+    const early = countdownWith(170);
+    expect(early.startResult).toBe(0);
+    expect(early.stunT).toBe(0);
     expect(countdownWith(-1).startResult).toBe(0);
   });
 

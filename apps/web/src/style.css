@@ -754,10 +754,6 @@ button {
   color: var(--hazard);
 }
 
-.hud-banner.bad strong {
-  color: var(--signal);
-}
-
 .hud-banner.pop {
   animation: banner 2.2s cubic-bezier(0.2, 1.4, 0.4, 1) forwards;
 }
