@@ -1,8 +1,8 @@
 import {
-  CHARACTERS, type ClientMessage, type Input, KARTS, type LobbyPlayer, Phase,
+  CHARACTERS, type ClientMessage, GapStats, type Input, KARTS, type LobbyPlayer, Phase,
   type RaceResult, type RaceSlot, SNAPSHOT_ACK_OFFSET, type ServerMessage, THEMES, TICK_RATE,
   type ThemeId, World, botInput, characterIndex, decodeInputs, encodeSnapshot, kartIndex,
-  kartById, makeInput, snapshotSize, validColor,
+  type NetReport, cleanNetReport, kartById, makeInput, snapshotSize, validColor,
 } from "@dario-kart/sim";
 
 /**
@@ -88,6 +88,10 @@ interface Player {
   lastEmote: number;
   lastNudge: number;
   errorsLogged: number;
+  /** Gaps between this connection's input messages arriving (sent at 30 Hz). */
+  readonly inputGaps: GapStats;
+  /** The client's latest connection report for the race it's in, until logged. */
+  net: { seed: number; report: NetReport; final: boolean } | null;
 }
 
 /** One JSON line per event; Cloudflare Workers Logs indexes the fields. */
@@ -113,6 +117,8 @@ export class RaceRoom {
   private slotPlayers: Array<Player | null> = [];
   private inputs: Input[] = [];
   private loop: ReturnType<typeof setInterval> | null = null;
+  /** Gaps between snapshots leaving the server: a stalled object, not the network. */
+  private readonly snapshotGaps = new GapStats();
   private lastFrame = 0;
   private accumulator = 0;
   private snapshotBuffer = new ArrayBuffer(64 * 1024);
@@ -130,7 +136,7 @@ export class RaceRoom {
   restore(conn: Conn, info: PlayerInfo | null, code: string): void {
     if (!info) return;
     this.code ||= code;
-    this.players.set(conn, { conn, info, joinedAt: this.joinCounter++, queue: new InputQueue(), slot: -1, lastEmote: 0, lastNudge: 0, errorsLogged: 0 });
+    this.players.set(conn, { conn, info, joinedAt: this.joinCounter++, queue: new InputQueue(), slot: -1, lastEmote: 0, lastNudge: 0, errorsLogged: 0, inputGaps: new GapStats(), net: null });
   }
 
   connect(conn: Conn, code: string): void {
@@ -144,6 +150,7 @@ export class RaceRoom {
     const player = this.players.get(conn);
     this.players.delete(conn);
     if (!player) return;
+    this.logNet(player, "left");
     log("leave", {
       code: this.code, player: player.info.id, name: player.info.name, closeCode: code, reason,
       phase: this.world ? "racing" : this.resultsTimer ? "results" : "lobby", slot: player.slot,
@@ -178,6 +185,7 @@ export class RaceRoom {
         return;
       }
       if (player.slot < 0) return;
+      player.inputGaps.arrive(Date.now());
       decodeInputs(new DataView(data), this.world.seed, (seq, steer, bits) => player.queue.push(seq, steer, bits));
       return;
     }
@@ -204,7 +212,7 @@ export class RaceRoom {
         info.primary = validColor(msg.primary, kartById(info.kart).color);
         info.secondary = validColor(msg.secondary, kartById(info.kart).accent);
         if (!existing) {
-          this.players.set(conn, { conn, info, joinedAt: this.joinCounter++, queue: new InputQueue(), slot: -1, lastEmote: 0, lastNudge: 0, errorsLogged: 0 });
+          this.players.set(conn, { conn, info, joinedAt: this.joinCounter++, queue: new InputQueue(), slot: -1, lastEmote: 0, lastNudge: 0, errorsLogged: 0, inputGaps: new GapStats(), net: null });
         }
         this.persist(conn, info);
         const player = this.players.get(conn)!;
@@ -265,6 +273,14 @@ export class RaceRoom {
         });
         break;
       }
+      case "netStats": {
+        const player = this.players.get(conn);
+        const report = cleanNetReport(msg.report);
+        if (!player || !report || typeof msg.seed !== "number") return;
+        player.net = { seed: msg.seed, report, final: msg.final === true };
+        if (player.net.final) this.logNet(player, "finished");
+        break;
+      }
       case "leave":
         this.disconnect(conn);
         conn.close(1000, "Left the lobby");
@@ -276,9 +292,25 @@ export class RaceRoom {
    * A player who drops mid-race and comes back gets their kart back instead of
    * spectating. If their old socket is still half-open, the new one wins.
    */
+  /** One `net_stats` line per connection per race. */
+  private logNet(player: Player, why: string): void {
+    const net = player.net;
+    if (!net) return;
+    player.net = null;
+    log("net_stats", {
+      code: this.code, seed: net.seed, player: player.info.id, name: player.info.name, why,
+      ...net.report, up: player.inputGaps.summary(),
+    });
+    player.inputGaps.reset();
+  }
+
   private reattach(player: Player): number {
-    const slot = this.slots.findIndex((s) => !s.bot && s.id === player.info.id);
-    if (slot < 0 || this.world!.karts[slot].finished) return -1;
+    // Two tabs can share an id. Prefer a seat nobody holds so one tab's reconnect
+    // doesn't take the other tab's kart.
+    const mine = (i: number) => !this.slots[i].bot && this.slots[i].id === player.info.id && !this.world!.karts[i].finished;
+    let slot = this.slots.findIndex((_, i) => mine(i) && !this.slotPlayers[i]);
+    if (slot < 0) slot = this.slots.findIndex((_, i) => mine(i));
+    if (slot < 0) return -1;
     const holder = this.slotPlayers[slot];
     if (holder && holder !== player) {
       holder.slot = -1;
@@ -338,6 +370,11 @@ export class RaceRoom {
     const botCount = Math.min(this.bots, MAX_RACERS - humans.length);
     this.slots = [];
     this.slotPlayers = [];
+    for (const p of this.players.values()) {
+      this.logNet(p, "next_race");
+      p.inputGaps.reset();
+    }
+    this.snapshotGaps.reset();
     humans.forEach((p, i) => {
       p.slot = i;
       p.queue.clear();
@@ -396,7 +433,10 @@ export class RaceRoom {
       this.accumulator -= tickMs;
       steps++;
       this.stepWorld(world);
-      if (world.tick % SNAPSHOT_EVERY === 0) this.sendSnapshot(world);
+      if (world.tick % SNAPSHOT_EVERY === 0) {
+        this.snapshotGaps.arrive(now);
+        this.sendSnapshot(world);
+      }
       if (world.phase === Phase.Finished || world.tick > MAX_RACE_TICKS) {
         this.finishRace(world);
         return;
@@ -484,7 +524,7 @@ export class RaceRoom {
     log("race_finish", {
       code: this.code, seed: world.seed, seconds: Math.round(world.tick / TICK_RATE),
       finished: results.filter((r) => r.time !== null).length, racers: results.length,
-      winner: results[0]?.name, players: this.players.size,
+      winner: results[0]?.name, players: this.players.size, serverSnapshotGaps: this.snapshotGaps.summary(),
     });
     this.stopRace();
     this.broadcast({ t: "results", results });

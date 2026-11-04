@@ -62,7 +62,9 @@ export default class Race extends Cloudflare.DurableObject<Race>()(
         }),
         webSocketClose: Effect.fn(function* (socket: Cloudflare.WebSocket, code: number, reason: string) {
           room.disconnect(connFor(socket.ws), code, reason);
-          yield* socket.close(code, reason);
+          // 1005/1006 mean "no close frame" and may not be sent back; closing with them throws.
+          const echo = code === 1000 || (code >= 3000 && code <= 4999) ? code : 1000;
+          yield* socket.close(echo, reason.slice(0, 120));
         }),
         webSocketError: Effect.fn(function* (socket: Cloudflare.WebSocket, error: unknown) {
           room.disconnect(connFor(socket.ws), 1006, `socket error: ${String(error).slice(0, 200)}`);

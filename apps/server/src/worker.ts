@@ -12,6 +12,9 @@ export default Cloudflare.Worker(
     main: import.meta.url,
     // Races in progress keep running the code they started with; new races pick up the deploy.
     codeUpdateStrategy: { mode: "deferred", maxDelay: "20 minutes" },
+    // Every 30 Hz input message is an invocation, so invocation logs would bury the
+    // JSON events (and the quota). Keep console logs and exceptions only.
+    observability: { enabled: true, logs: { enabled: true, invocationLogs: false } },
   },
   Effect.gen(function* () {
     const races = yield* Race;
