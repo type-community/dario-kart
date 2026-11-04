@@ -13,6 +13,8 @@ export interface Paint {
 
 export interface LobbyPlayer extends Paint {
   readonly id: string;
+  /** This connection. Unlike `id`, it's unique even when one player has two tabs open. */
+  readonly key: string;
   readonly name: string;
   readonly character: string;
   readonly kart: string;
@@ -42,6 +44,8 @@ export type ClientMessage =
   | { readonly t: "pick"; readonly character: string; readonly kart: string; readonly primary: number; readonly secondary: number }
   | { readonly t: "settings"; readonly track: ThemeId; readonly bots: number }
   | { readonly t: "start" }
+  /** Remove a lobby entry by `key`. The host can remove anyone, anyone can remove their own other tabs. */
+  | { readonly t: "kick"; readonly key: string }
   | { readonly t: "ping"; readonly at: number }
   | { readonly t: "leave" }
   | { readonly t: "emote"; readonly n: number }
@@ -50,13 +54,16 @@ export type ClientMessage =
   | { readonly t: "netStats"; readonly seed: number; readonly final: boolean; readonly report: NetReport };
 
 export type ServerMessage =
-  | { readonly t: "lobby"; readonly code: string; readonly players: ReadonlyArray<LobbyPlayer>; readonly track: ThemeId; readonly bots: number; readonly racing: boolean }
+  | { readonly t: "lobby"; readonly code: string; readonly players: ReadonlyArray<LobbyPlayer>; readonly track: ThemeId; readonly bots: number; readonly racing: boolean; readonly you: string }
   | { readonly t: "race"; readonly seed: number; readonly track: ThemeId; readonly laps: number; readonly slots: ReadonlyArray<RaceSlot>; readonly you: number }
   | { readonly t: "results"; readonly results: ReadonlyArray<RaceResult> }
   | { readonly t: "event"; readonly text: string }
   | { readonly t: "emote"; readonly slot: number; readonly n: number }
   | { readonly t: "pong"; readonly at: number }
   | { readonly t: "error"; readonly message: string };
+
+/** Close code for a player removed from the lobby; the client doesn't reconnect. */
+export const KICKED = 4002;
 
 export const validColor = (value: unknown, fallback: number): number =>
   typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0xffffff ? value : fallback;

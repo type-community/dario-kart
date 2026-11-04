@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { type ServerMessage, decodeSnapshot, encodeInputs, kartField } from "@dario-kart/sim";
-import { type Conn, type PlayerInfo, RaceRoom } from "../src/room.ts";
+import { KICKED, type ServerMessage, decodeSnapshot, encodeInputs, kartField } from "@dario-kart/sim";
+import { type Conn, RaceRoom, type Saved } from "../src/room.ts";
 
 /** Regression tests for the bugs TLC found in specs/RaceLobby.tla. */
 
@@ -22,8 +22,8 @@ const hello = (room: RaceRoom, conn: Conn, name: string) =>
 
 describe("race lifecycle", () => {
   test("a reset object tells stranded racers the race is gone", async () => {
-    const persisted = new Map<Conn, PlayerInfo>();
-    const room = new RaceRoom((conn, info) => persisted.set(conn, { ...info }));
+    const persisted = new Map<Conn, Saved>();
+    const room = new RaceRoom((conn, saved) => saved && persisted.set(conn, { ...saved, info: { ...saved.info } }));
     const a = client();
     room.connect(a.conn, "TLA1");
     hello(room, a.conn, "Ada");
@@ -170,3 +170,84 @@ describe("race lifecycle", () => {
   });
 });
 
+const lastLobby = (c: ReturnType<typeof client>) => {
+  const lobby = c.messages.findLast((m) => m.t === "lobby");
+  if (!lobby || lobby.t !== "lobby") throw new Error("no lobby");
+  return lobby;
+};
+const amHost = (c: ReturnType<typeof client>) => {
+  const lobby = lastLobby(c);
+  return lobby.players.find((p) => p.host)?.key === lobby.you;
+};
+
+describe("lobby", () => {
+  test("only the first of two tabs with one id is shown as host", () => {
+    const room = new RaceRoom(() => {});
+    const first = client();
+    const second = client();
+    room.connect(first.conn, "KICK1");
+    room.connect(second.conn, "KICK1");
+    hello(room, first.conn, "Ada");
+    hello(room, second.conn, "Ada");
+    expect(amHost(first)).toBe(true);
+    // Before, the second tab matched the host by id, showed Start, and the server ignored it.
+    expect(amHost(second)).toBe(false);
+  });
+
+  test("the host can kick anyone; others can only close their own tabs", () => {
+    const room = new RaceRoom(() => {});
+    const closed = new Map<Conn, number>();
+    const join = (name: string) => {
+      const c = client();
+      c.conn.close = (code) => { closed.set(c.conn, code); };
+      room.connect(c.conn, "KICK2");
+      hello(room, c.conn, name);
+      return c;
+    };
+    const host = join("Ada");
+    const bob = join("Bob");
+    const bobTab = join("Bob");
+    const cy = join("Cy");
+    const key = (c: ReturnType<typeof client>) => lastLobby(c).you;
+    const names = () => lastLobby(host).players.map((p) => p.name);
+
+    // Bob can't kick Cy or the host.
+    room.message(bob.conn, JSON.stringify({ t: "kick", key: key(cy) }));
+    room.message(bob.conn, JSON.stringify({ t: "kick", key: key(host) }));
+    expect(names()).toEqual(["Ada", "Bob", "Bob", "Cy"]);
+
+    // Bob can close his own other tab.
+    room.message(bob.conn, JSON.stringify({ t: "kick", key: key(bobTab) }));
+    expect(closed.get(bobTab.conn)).toBe(KICKED);
+    expect(names()).toEqual(["Ada", "Bob", "Cy"]);
+
+    // The host can kick anyone, even a socket that never answers.
+    room.message(host.conn, JSON.stringify({ t: "kick", key: key(cy) }));
+    expect(closed.get(cy.conn)).toBe(KICKED);
+    expect(names()).toEqual(["Ada", "Bob"]);
+    // A kicked socket's messages are ignored.
+    room.message(cy.conn, JSON.stringify({ t: "start" }));
+    expect(room.racing).toBe(false);
+  });
+
+  test("the host is still the host after the object hibernates", () => {
+    const persisted = new Map<Conn, Saved>();
+    const room = new RaceRoom((conn, saved) => saved ? persisted.set(conn, saved) : persisted.delete(conn));
+    const a = client();
+    const b = client();
+    room.connect(a.conn, "KICK3");
+    room.connect(b.conn, "KICK3");
+    hello(room, a.conn, "Ada");
+    hello(room, b.conn, "Bob");
+    const keyA = lastLobby(a).you;
+
+    // Cloudflare hands back the sockets in any order.
+    const restored = new RaceRoom(() => {});
+    restored.restore(b.conn, persisted.get(b.conn)!, "KICK3");
+    restored.restore(a.conn, persisted.get(a.conn)!, "KICK3");
+    restored.announceRestart();
+    expect(amHost(a)).toBe(true);
+    expect(amHost(b)).toBe(false);
+    expect(lastLobby(a).you).toBe(keyA);
+  });
+});

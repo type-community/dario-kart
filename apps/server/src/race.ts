@@ -6,6 +6,9 @@ import { type Conn, type PlayerInfo, RaceRoom } from "./room.ts";
 interface Attachment {
   readonly code: string;
   readonly info: PlayerInfo | null;
+  /** Missing on sockets from before kicking existed. */
+  readonly key?: string;
+  readonly joinedAt?: number;
 }
 
 /**
@@ -31,18 +34,21 @@ export default class Race extends Cloudflare.DurableObject<Race>()(
         return conn;
       };
       const sockets = new WeakMap<Conn, Cloudflare.RawWebSocket>();
-      const room = new RaceRoom((conn, info) => {
+      const room = new RaceRoom((conn, saved) => {
         const ws = sockets.get(conn);
         if (!ws) return;
         const prev = ws.deserializeAttachment() as Attachment | null;
-        ws.serializeAttachment({ code: prev?.code ?? "", info } satisfies Attachment);
+        ws.serializeAttachment({ code: prev?.code ?? "", info: saved?.info ?? null, key: saved?.key, joinedAt: saved?.joinedAt } satisfies Attachment);
       });
 
+      let order = 0;
       for (const socket of yield* state.getWebSockets()) {
         const conn = connFor(socket.ws);
         sockets.set(conn, socket.ws);
-        const attachment = socket.ws.deserializeAttachment() as Attachment | null;
-        room.restore(conn, attachment?.info ?? null, attachment?.code ?? "");
+        const a = socket.ws.deserializeAttachment() as Attachment | null;
+        const saved = a?.info ? { info: a.info, key: a.key ?? crypto.randomUUID().slice(0, 8), joinedAt: a.joinedAt ?? order } : null;
+        order++;
+        room.restore(conn, saved, a?.code ?? "");
       }
       room.announceRestart();
 

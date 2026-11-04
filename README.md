@@ -11,7 +11,7 @@ bun run dev        # alchemy dev: game Worker + Durable Objects in workerd, Vite
 
 `alchemy dev` prints two URLs: `game` (the Worker) and `web` (the client). Open `web`.
 
-- **Start a lobby** creates a lobby code. Share the invite link and others land in the same Durable Object.
+- **Start a lobby** creates a lobby code. Share the invite link and others land in the same Durable Object. Whoever joined first is the host: they pick the track and bots, start the race, and can kick anyone. Anyone can kick their own other tabs.
 - **Practice against bots** runs the whole simulation in your browser, with no server.
 - Handy URL flags: `?practice&track=nyc`, `?practice&autopilot` (bot drives you), `?race=CODE&name=You`.
 

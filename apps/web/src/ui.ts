@@ -23,6 +23,8 @@ export interface LobbyState {
   track: ThemeId;
   bots: number;
   racing: boolean;
+  /** Which entry in `players` is this tab. */
+  you: string;
 }
 
 const esc = (s: string) =>
@@ -114,8 +116,9 @@ const showroom = (profile: Profile) => {
     </div>`;
 };
 
-export const lobbyView = (lobby: LobbyState, profile: Profile, hostIsMe: boolean) => {
+export const lobbyView = (lobby: LobbyState, profile: Profile) => {
   const host = lobby.players.find((p) => p.host);
+  const hostIsMe = host !== undefined && host.key === lobby.you;
   const total = lobby.players.length + lobby.bots;
   const trackButtons = THEMES.map((t) => `
     <button class="track-option" type="button" data-track="${t.id}" aria-pressed="${t.id === lobby.track}" ${hostIsMe ? "" : "disabled"} title="${t.tagline}">
@@ -154,7 +157,10 @@ export const lobbyView = (lobby: LobbyState, profile: Profile, hostIsMe: boolean
               <span class="pos">${i + 1}</span>
               <span class="dot">${avatarSvg(c.id, 28, false)}</span>
               <span class="who">${esc(p.name)}<small><i style="background:${hex(p.primary)}"></i><i style="background:${hex(p.secondary)}"></i>${c.name} in ${kartById(p.kart).name}</small></span>
-              <span class="tag">${p.id === profile.id ? "You" : p.host ? "Host" : ""}</span>
+              <span class="tag">${p.key === lobby.you ? "You" : p.id === profile.id ? "Your other tab" : p.host ? "Host" : ""}</span>
+              ${p.key !== lobby.you && (hostIsMe || p.id === profile.id)
+                ? `<button class="quiet kick" type="button" data-action="kick" data-key="${esc(p.key)}" aria-label="Remove ${esc(p.name)} from the lobby">Kick</button>`
+                : "<span></span>"}
             </li>`;
           }).join("")}
           ${lobby.bots > 0 ? `<li class="bots"><span class="pos">+</span><span>${lobby.bots} bots fill out the grid</span></li>` : ""}
