@@ -2,7 +2,7 @@
 // the host starts a race with bots, and both drive with the bot AI for a while.
 import {
   DT, KART_NET_FIELDS, Phase, World, applyKartFields, botInput, characterIndex, decodeSnapshot,
-  encodeInputs, kartIndex, makeInput, type ServerMessage,
+  PROTOCOL_VERSION, encodeInputs, kartIndex, makeInput, type ServerMessage,
 } from "@dario-kart/sim";
 
 const base = (process.argv[2] ?? "http://localhost:1337").replace(/^http/, "ws");
@@ -26,7 +26,7 @@ const connect = (name: string) =>
     ws.binaryType = "arraybuffer";
     const client: Client = { ws, name, snapshots: 0, lastTick: 0, slot: -1, world: null, messages: [], maxDist: -1e9 };
     ws.onopen = () => {
-      ws.send(JSON.stringify({ t: "hello", id: crypto.randomUUID(), name, character: "dario", kart: "claude", primary: 0xff0000, secondary: 0xffffff }));
+      ws.send(JSON.stringify({ t: "hello", v: PROTOCOL_VERSION, id: crypto.randomUUID(), name, character: "dario", kart: "claude", primary: 0xff0000, secondary: 0xffffff }));
       resolve(client);
     };
     ws.onerror = (e) => reject(e);

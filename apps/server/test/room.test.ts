@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { KICKED, type ServerMessage, decodeSnapshot, encodeInputs, kartField } from "@dario-kart/sim";
+import { KICKED, PROTOCOL_VERSION, type ServerMessage, decodeSnapshot, encodeInputs, kartField } from "@dario-kart/sim";
 import { type Conn, RaceRoom, type Saved } from "../src/room.ts";
 
 /** Regression tests for the bugs TLC found in specs/RaceLobby.tla. */
@@ -18,9 +18,20 @@ const client = () => {
 };
 
 const hello = (room: RaceRoom, conn: Conn, name: string) =>
-  room.message(conn, JSON.stringify({ t: "hello", id: name, name, character: "lisa", kart: "astra", primary: 0, secondary: 0 }));
+  room.message(conn, JSON.stringify({ t: "hello", v: PROTOCOL_VERSION, id: name, name, character: "lisa", kart: "astra", primary: 0, secondary: 0 }));
 
 describe("race lifecycle", () => {
+  test("a tab from before a deploy is told to reload instead of joining", () => {
+    const room = new RaceRoom(() => {});
+    const a = client();
+    let closed = 0;
+    a.conn.close = (code) => { closed = code; };
+    room.connect(a.conn, "OLD1");
+    room.message(a.conn, JSON.stringify({ t: "hello", id: "Ada", name: "Ada", character: "lisa", kart: "astra", primary: 0, secondary: 0 }));
+    expect(a.messages.map((m) => m.t)).toEqual(["error"]);
+    expect(closed).toBe(1000);
+  });
+
   test("a reset object tells stranded racers the race is gone", async () => {
     const persisted = new Map<Conn, Saved>();
     const room = new RaceRoom((conn, saved) => saved && persisted.set(conn, { ...saved, info: { ...saved.info } }));

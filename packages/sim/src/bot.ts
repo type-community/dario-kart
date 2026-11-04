@@ -74,7 +74,7 @@ export const botInput = (world: World, kart: Kart, out: Input, skillOverride?: n
     kart.botItemDelay -= DT;
     if (kart.botItemDelay <= 0 && !(kart.prevBits & InputBit.Item)) {
       bits |= InputBit.Item;
-      if (kart.item === ItemKind.Oil || (kart.rank === 0 && hash01(world.seed, world.tick, 5) < 0.5)) {
+      if (kart.item === ItemKind.Missile && kart.rank === 0 && hash01(world.seed, world.tick, 5) < 0.5) {
         bits |= InputBit.Back;
       }
       kart.botItemDelay = 0.6 + hash01(world.seed, world.tick, kart.slot + 11) * 2.5;

@@ -2,7 +2,7 @@
 // prediction drifts from the server's authoritative state at each snapshot.
 import {
   DT, Phase, World, applyKartFields, botInput, characterIndex, copyInput, decodeSnapshot,
-  encodeInputs, type Input, kartIndex, makeInput, type ServerMessage,
+  PROTOCOL_VERSION, encodeInputs, type Input, kartIndex, makeInput, type ServerMessage,
 } from "@dario-kart/sim";
 
 const base = (process.argv[2] ?? "http://localhost:1337").replace(/^http/, "ws");
@@ -15,7 +15,7 @@ let seq = 0;
 const pending: Input[] = [];
 const errors: number[] = [];
 ws.onopen = () => {
-  ws.send(JSON.stringify({ t: "hello", id: "p1", name: "Pred", character: "sam", kart: "fable", primary: 0x00ff00, secondary: 0x000000 }));
+  ws.send(JSON.stringify({ t: "hello", v: PROTOCOL_VERSION, id: "p1", name: "Pred", character: "sam", kart: "fable", primary: 0x00ff00, secondary: 0x000000 }));
   setTimeout(() => ws.send(JSON.stringify({ t: "settings", track: "sf", bots: 3 })), 200);
   setTimeout(() => ws.send(JSON.stringify({ t: "start" })), 400);
 };

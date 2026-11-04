@@ -1,5 +1,5 @@
 import {
-  COUNTDOWN_TICKS, type DecodedSnapshot, DT, type Input, KART_NET_FIELDS, type Kart, Phase,
+  COUNTDOWN_TICKS, type DecodedSnapshot, DT, type Input, ItemKind, KART_NET_FIELDS, type Kart, Phase,
   type RaceSlot, TICK_RATE, type ThemeId, World, applyKartFields, botInput, characterIndex,
   copyInput, kartIndex, makeInput, themeById, wrapS,
 } from "@dario-kart/sim";
@@ -12,7 +12,7 @@ import { Particles } from "./particles.ts";
 import type { Hud, HudState, MapDot } from "./hud.ts";
 import type { Net } from "./net.ts";
 import {
-  KartVisual, SPARK_COLORS, type TrackScene, buildTrackScene, makeBubble, makeMissileMesh, makeOilMesh, makeResetWall,
+  KartVisual, SPARK_COLORS, type TrackScene, buildTrackScene, makeBubble, makeMissileMesh,
   placeOnTrack, trackPoint, trackPose,
 } from "./scene.ts";
 
@@ -142,8 +142,6 @@ export class RaceView {
   private readonly trackScene: TrackScene;
   private readonly visuals: KartVisual[];
   private readonly missiles: THREE.Mesh[] = [];
-  private readonly oils: THREE.Mesh[] = [];
-  private readonly resetWall: { mesh: THREE.Mesh; texture: THREE.CanvasTexture };
   private readonly prev: Pose[];
   private readonly render: Pose[];
   private readonly inputs: Input[];
@@ -225,14 +223,7 @@ export class RaceView {
       m.visible = false;
       stage.scene.add(m);
       this.missiles.push(m);
-      const o = makeOilMesh();
-      o.visible = false;
-      stage.scene.add(o);
-      this.oils.push(o);
     }
-    this.resetWall = makeResetWall(this.world.track.halfWidth * 2 + 8);
-    this.resetWall.mesh.visible = false;
-    stage.scene.add(this.resetWall.mesh);
     hud?.setTrack(this.world.track);
     this.prevStun = new Float32Array(this.world.karts.length);
     this.prevAir = new Uint8Array(this.world.karts.length);
@@ -302,9 +293,7 @@ export class RaceView {
     if (!this.hud || this.mode.kind === "attract") return;
     const name = (slot: number) => (slot === this.setup.you ? "You" : this.setup.slots[slot]?.name ?? "Someone");
     if (event.type === "hit" && event.by >= 0 && event.by !== event.victim) {
-      this.hud.feed(event.cause === "missile" ? `${name(event.by)} hit ${name(event.victim)}` : `${name(event.by)} steamrolled ${name(event.victim)}`);
-    } else if (event.type === "use" && event.item === 4) {
-      this.hud.feed(`${name(event.slot)} triggered The Reset`);
+      this.hud.feed(`${name(event.by)} hit ${name(event.victim)}`);
     } else if (event.type === "finish") {
       this.hud.feed(`${name(event.slot)} finished`);
     }
@@ -347,11 +336,6 @@ export class RaceView {
     world.tick = snap.header.tick;
     world.phase = snap.header.phase as Phase;
     world.phaseTicks = snap.header.phaseTicks;
-    const reset = world.reset;
-    reset.active = snap.header.resetActive;
-    reset.owner = snap.header.resetOwner;
-    reset.dist = snap.header.resetDist;
-    reset.ticksLeft = snap.header.resetTicksLeft;
 
     const you = this.setup.you;
     for (let i = 0; i < world.karts.length; i++) {
@@ -361,7 +345,6 @@ export class RaceView {
       const me = world.karts[you];
       const before = { dist: me.dist, d: me.d };
       applyKartFields(snap.karts, you, me);
-      me.inReset = reset.active && reset.owner !== you && me.dist < reset.dist && !me.invincible ? 1 : 0;
       const ack = snap.header.ack;
       let drop = 0;
       while (drop < this.pending.length && this.pending[drop].seq <= ack) drop++;
@@ -440,13 +423,13 @@ export class RaceView {
       placeOnTrack(track, r.dist, r.d, r.z, r.heading, v.root);
       point.copy(v.root.position);
       v.apply({
-        speed: kart.speed, boostT: kart.boostT, agiT: kart.agiT, bulletT: kart.bulletT, stunT: kart.stunT,
+        speed: kart.speed, boostT: kart.boostT, stunT: kart.stunT,
         drifting: kart.drifting, driftCharge: kart.driftCharge, trickT: kart.trickT, slip: r.slip, time: this.time,
         showLabel: this.mode.kind !== "attract" && i !== you && point.distanceToSquared(this.stage.camera.position) > 144,
       });
     }
 
-    this.drawHazards();
+    this.drawMissiles();
 
     this.trackScene.update(this.time, online ? this.latest?.boxesReady ?? null : this.localBoxes(), online ? this.latest?.coinsReady ?? null : this.localCoins(), this.kartNear);
 
@@ -484,7 +467,7 @@ export class RaceView {
     return ready;
   }
 
-  private drawHazards(): void {
+  private drawMissiles(): void {
     const world = this.world;
     const track = world.track;
     const online = this.mode.kind === "online";
@@ -503,26 +486,6 @@ export class RaceView {
       placeOnTrack(track, m.dist + Math.cos(m.heading) * 88 * since, m.d + Math.sin(m.heading) * 88 * since, 0.8, m.heading, mesh);
     }
     for (let i = used; i < this.missiles.length; i++) this.missiles[i].visible = false;
-    used = 0;
-    const netOils = online ? this.latest?.oils : undefined;
-    const oilCount = online ? netOils?.length ?? 0 : world.oils.length;
-    for (let i = 0; i < oilCount && used < this.oils.length; i++) {
-      const o = online ? netOils![i] : world.oils[i];
-      if (!online && !world.oils[i].active) continue;
-      const mesh = this.oils[used++];
-      mesh.visible = true;
-      placeOnTrack(track, o.dist, o.d, 0.07, 0, mesh);
-      mesh.scale.setScalar(Math.min(1, o.life / 2) * 0.3 + 0.7);
-    }
-    for (let i = used; i < this.oils.length; i++) this.oils[i].visible = false;
-    const reset = world.reset;
-    const wall = this.resetWall;
-    wall.mesh.visible = reset.active;
-    if (reset.active) {
-      const extra = online ? reset.speed * since : 0;
-      placeOnTrack(track, reset.dist + extra, 0, 11, 0, wall.mesh);
-      wall.texture.offset.x = -this.time * 0.8;
-    }
   }
 
   /** Pop a speech bubble over a kart. */
@@ -573,7 +536,7 @@ export class RaceView {
           this.sparks.emit(this.tmpA.x, this.tmpA.y, this.tmpA.z, (Math.random() - 0.5) * 4, 2 + Math.random() * 3, (Math.random() - 0.5) * 4, SPARK_COLORS[tier], 0.35, 14);
         }
       }
-      if (kart.boostT > 0 && kart.bulletT <= 0) {
+      if (kart.boostT > 0) {
         trackPoint(track, r.dist - c * 2.3, r.d - sn * 2.3, 0.5 + r.z, this.tmpA);
         this.sparks.emit(this.tmpA.x, this.tmpA.y, this.tmpA.z, (Math.random() - 0.5) * 2, Math.random() * 2, (Math.random() - 0.5) * 2, kart.boostKind === 6 ? 0xb18cff : 0x3de0ff, 0.3);
       }
@@ -661,7 +624,7 @@ export class RaceView {
       sound.itemLand();
     }
     w.roll = me.itemRollT;
-    if ((me.item !== w.item || me.itemCount < w.itemCount) && w.item && me.itemRollT <= 0 && (me.itemCount < w.itemCount || me.item === 0)) sound.fire();
+    if ((me.item !== w.item || me.itemCount < w.itemCount) && w.item === ItemKind.Missile && me.itemRollT <= 0 && (me.itemCount < w.itemCount || me.item === 0)) sound.fire();
     w.item = me.item;
     w.itemCount = me.itemCount;
 
@@ -798,16 +761,11 @@ export class RaceView {
     const focus = me ?? order[0];
     const place = order.indexOf(focus) + 1;
     const racingSeconds = (world.tick - COUNTDOWN_TICKS) / TICK_RATE;
-    const reset = world.reset;
     let status = "";
     let bad = false;
     if (this.time < this.statusUntil) {
       status = this.statusText;
       bad = this.statusBad;
-    } else if (focus.bulletT > 0) {
-      status = "Nerf Bullet";
-    } else if (focus.agiT > 0) {
-      status = "AGI achieved";
     }
     const state: HudState = {
       place,
@@ -827,8 +785,6 @@ export class RaceView {
       twin: focus.perk === "twin-engine",
       countdown: world.phase === Phase.Countdown ? world.phaseTicks / TICK_RATE : 0,
       racing: world.phase !== Phase.Countdown,
-      resetActive: reset.active,
-      resetSafe: !me || reset.owner === me.slot || me.finished,
       status,
       statusBad: bad,
       finishedPlace: focus.finished ? place : 0,
@@ -843,7 +799,7 @@ export class RaceView {
       draftCharge: focus.draftCharge,
     };
     const dots: MapDot[] = this.render.map((r, i) => ({ dist: r.dist, d: r.d, me: i === this.setup.you }));
-    hud.update(state, dots, reset.active ? reset.dist : null);
+    hud.update(state, dots);
   }
 
   dispose(): void {
@@ -860,12 +816,11 @@ export class RaceView {
       this.stage.scene.remove(v.root);
       v.dispose();
     }
-    for (const m of [...this.missiles, ...this.oils, this.resetWall.mesh]) {
+    for (const m of this.missiles) {
       this.stage.scene.remove(m);
       m.geometry.dispose();
       (m.material as THREE.Material).dispose();
     }
-    this.resetWall.texture.dispose();
     // Only unhook our own handler: on a reconnect the replacement view is already attached.
     if (this.mode.kind === "online" && this.mode.net.onSnapshot === this.snapshotHandler) this.mode.net.onSnapshot = () => {};
     if (this.controls) this.controls.enabled = false;

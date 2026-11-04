@@ -133,31 +133,32 @@ describe("feel", () => {
     for (const theme of THEMES) expect(generateTrack(theme.id, 11, 8).loops.length).toBeGreaterThan(0);
   });
 
-  test("AGI launches anyone it touches", () => {
+  test("a Compute Boost item boosts you and fires nothing", () => {
     const world = solo();
     skipCountdown(world);
-    const [agi, victim] = world.karts;
-    victim.dist = agi.dist + 2;
-    victim.d = agi.d + 0.5;
-    agi.agiT = 5;
-    world.step(world.karts.map(() => makeInput()));
-    expect(victim.stunT).toBeGreaterThan(0);
-    expect(Math.abs(victim.kickV)).toBeGreaterThan(10);
-    expect(victim.vz).toBeGreaterThan(5);
-    expect(world.events.some((e) => e.type === "hit" && e.cause === "ram")).toBe(true);
+    const kart = world.karts[0];
+    kart.item = ItemKind.Boost;
+    kart.itemCount = 1;
+    const inputs = world.karts.map(() => makeInput());
+    inputs[0].bits = InputBit.Item | InputBit.Throttle;
+    world.step(inputs);
+    expect(kart.item).toBe(ItemKind.None);
+    expect(kart.boostKind).toBe(BoostKind.Item);
+    expect(kart.boostT).toBeGreaterThan(1);
+    expect(world.missiles.some((m) => m.active)).toBe(false);
   });
 
   test("items can't be used until the roulette stops", () => {
     const world = solo();
     skipCountdown(world);
     const kart = world.karts[0];
-    kart.item = ItemKind.Oil;
+    kart.item = ItemKind.Missile;
     kart.itemCount = 1;
     kart.itemRollT = 1;
     const inputs = world.karts.map(() => makeInput());
     inputs[0].bits = InputBit.Item;
     world.step(inputs);
-    expect(kart.item).toBe(ItemKind.Oil);
+    expect(kart.item).toBe(ItemKind.Missile);
     inputs[0].bits = 0;
     for (let t = 0; t < 70; t++) world.step(inputs);
     inputs[0].bits = InputBit.Item;

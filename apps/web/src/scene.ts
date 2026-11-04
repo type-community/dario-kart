@@ -546,16 +546,10 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
 
 const fx = {
   flame: new THREE.ConeGeometry(0.42, 1.8, 12).rotateX(-Math.PI / 2),
-  aura: new THREE.SphereGeometry(2.6, 24, 16),
-  bullet: new THREE.CapsuleGeometry(1.3, 3.4, 6, 16).rotateX(Math.PI / 2),
-  bulletTip: new THREE.SphereGeometry(1.32, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2).rotateX(Math.PI / 2),
   spark: new THREE.SphereGeometry(0.17, 6, 4),
   smoke: new THREE.SphereGeometry(0.45, 8, 6),
 };
 const flameMat = new THREE.MeshBasicMaterial({ color: 0x3de0ff, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
-const auraMat = new THREE.MeshBasicMaterial({ color: 0xffc93c, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false });
-const bulletMat = new THREE.MeshStandardMaterial({ color: 0xff7a1a, roughness: 0.7 });
-const bulletTipMat = new THREE.MeshStandardMaterial({ color: 0x1e5bff, roughness: 0.5 });
 const smokeMat = new THREE.MeshBasicMaterial({ color: 0x2a2a2e, transparent: true, opacity: 0.55, depthWrite: false });
 /** Drift spark colors by charge: building, mini boost ready, super boost ready. */
 export const SPARK_COLORS = [0xd7dce6, 0x3de0ff, 0xff3d7f, 0xb18cff];
@@ -590,8 +584,6 @@ export interface KartLook {
 export interface KartFx {
   speed: number;
   boostT: number;
-  agiT: number;
-  bulletT: number;
   stunT: number;
   drifting: number;
   driftCharge: number;
@@ -619,8 +611,6 @@ export class KartVisual {
   readonly body: THREE.Group;
   private readonly glow: THREE.MeshBasicMaterial;
   private readonly flame: THREE.Mesh;
-  private readonly aura: THREE.Mesh;
-  private readonly bullet: THREE.Group;
   private readonly sparks: THREE.Mesh[] = [];
   private readonly smoke: THREE.Mesh;
   private readonly label: THREE.Sprite;
@@ -646,30 +636,13 @@ export class KartVisual {
     this.smoke.visible = false;
     this.body.add(this.smoke);
 
-    this.aura = new THREE.Mesh(fx.aura, auraMat);
-    this.aura.position.y = 0.9;
-    this.root.add(this.aura);
-
-    this.bullet = new THREE.Group();
-    const shell = new THREE.Mesh(fx.bullet, bulletMat);
-    const tip = new THREE.Mesh(fx.bulletTip, bulletTipMat);
-    tip.position.z = 1.7;
-    this.bullet.add(shell, tip);
-    this.bullet.position.y = 1.5;
-    this.root.add(this.bullet);
-
     this.label = labelSprite(look.me ? "You" : look.name, look.me);
     this.root.add(this.label);
   }
 
   apply(state: KartFx): void {
-    const bullet = state.bulletT > 0;
-    this.body.visible = !bullet;
-    this.bullet.visible = bullet;
-    this.flame.visible = state.boostT > 0 && !bullet;
+    this.flame.visible = state.boostT > 0;
     if (this.flame.visible) this.flame.scale.set(1, 1, 0.8 + Math.sin(state.time * 40) * 0.25);
-    this.aura.visible = state.agiT > 0;
-    if (this.aura.visible) this.aura.scale.setScalar(1 + Math.sin(state.time * 8) * 0.08);
     this.body.rotation.y = state.stunT > 0 ? state.time * 14 : -state.slip * 0.35;
     this.body.rotation.z = state.stunT > 0 ? 0 : state.slip * 0.2;
     // Trick: a full barrel roll while airborne.
@@ -697,55 +670,13 @@ export class KartVisual {
   }
 }
 
-/* ---------------- projectiles & hazards ---------------- */
+/* ---------------- projectiles ---------------- */
 
 export const makeMissileMesh = (): THREE.Mesh =>
   new THREE.Mesh(
     new THREE.CapsuleGeometry(0.32, 1.3, 4, 10).rotateX(Math.PI / 2),
     new THREE.MeshStandardMaterial({ color: 0xff3d7f, emissive: 0xff3d7f, emissiveIntensity: 0.8 }),
   );
-
-export const makeOilMesh = (): THREE.Mesh => {
-  const mesh = new THREE.Mesh(
-    new THREE.CircleGeometry(3.4, 28).rotateX(-Math.PI / 2),
-    new THREE.MeshStandardMaterial({ color: 0x050507, roughness: 0.05, metalness: 0.9 }),
-  );
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(3.2, 3.9, 32).rotateX(-Math.PI / 2),
-    new THREE.MeshBasicMaterial({ color: 0xff1a3d, side: THREE.DoubleSide }),
-  );
-  ring.position.y = 0.02;
-  mesh.add(ring);
-  return mesh;
-};
-
-export const makeResetWall = (width: number): { mesh: THREE.Mesh; texture: THREE.CanvasTexture } => {
-  const texture = canvasTexture(512, 256, (ctx) => {
-    ctx.fillStyle = "rgba(255,61,127,0.55)";
-    ctx.fillRect(0, 0, 512, 256);
-    ctx.fillStyle = "rgba(196,31,91,0.6)";
-    for (let i = -256; i < 768; i += 64) {
-      ctx.beginPath();
-      ctx.moveTo(i, 0);
-      ctx.lineTo(i + 32, 0);
-      ctx.lineTo(i + 160, 256);
-      ctx.lineTo(i + 128, 256);
-      ctx.fill();
-    }
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "italic 900 96px 'Barlow Condensed', sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("THE RESET", 256, 128);
-  });
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.repeat.set(Math.max(1, width / 30), 1);
-  const mesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(width, 22),
-    new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide, depthWrite: false }),
-  );
-  return { mesh, texture };
-};
 
 /** Speech bubble for emotes, floating above a kart. */
 export const makeBubble = (text: string, accent: number): THREE.Sprite => {

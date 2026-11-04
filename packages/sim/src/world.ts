@@ -7,7 +7,6 @@ export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
 export const LAPS = 2;
 export const COUNTDOWN_TICKS = 3 * TICK_RATE;
-export const RESET_TICKS = 10 * TICK_RATE;
 export const KART_RADIUS = 1.0;
 /** Once someone finishes, everyone else has this long before the race is called. */
 export const FINISH_GRACE_TICKS = 20 * TICK_RATE;
@@ -78,10 +77,11 @@ export const STAT = {
   stunPerDurability: 0.075,
 };
 /** Why a kart is slower than it wants to be, so the HUD can always say. */
-export const SlowFlag = { Wall: 1, SlowZone: 2, Oil: 4, Reset: 8, Hit: 16 } as const;
+export const SlowFlag = { Wall: 1, SlowZone: 2, Hit: 4 } as const;
 export const BoostKind = { None: 0, Pad: 1, Drift: 2, SuperDrift: 3, Landing: 4, Item: 5, UltraDrift: 6, Draft: 7, Trick: 8, Rocket: 9 } as const;
 const MISSILE_SPEED = 88;
-const BULLET_SPEED = 96;
+/** Seconds of boost from a Compute Boost item. */
+export const BOOST_ITEM_SECONDS = 1.6;
 const BOX_RESPAWN_TICKS = 2 * TICK_RATE;
 
 export const Phase = {
@@ -123,12 +123,8 @@ export class Kart {
   speed = 0;
   boostT = 0;
   stunT = 0;
-  slickT = 0;
-  slickImmuneT = 0;
   wallT = 0;
   slowFlags = 0;
-  bulletT = 0;
-  agiT = 0;
   airT = 0;
   kickV = 0;
   itemRollT = 0;
@@ -152,7 +148,6 @@ export class Kart {
   item2Count = 0;
   finishTick = -1;
   prevBits = 0;
-  inReset = 0;
   slowZone = 0;
   rank = 0;
   botLane = 0;
@@ -179,10 +174,6 @@ export class Kart {
     this.hp = this.hpMax;
   }
 
-  get invincible(): boolean {
-    return this.agiT > 0 || this.bulletT > 0;
-  }
-
   get finished(): boolean {
     return this.finishTick >= 0;
   }
@@ -195,7 +186,7 @@ export class Kart {
  */
 export const KART_NET_FIELDS = [
   "dist", "d", "z", "vz", "heading", "slip", "speed", "kickV",
-  "boostT", "boostKind", "stunT", "slickT", "slickImmuneT", "slowFlags", "bulletT", "agiT", "airT", "itemRollT",
+  "boostT", "boostKind", "stunT", "slowFlags", "airT", "itemRollT",
   "drifting", "driftDir", "driftCharge", "hp", "gpus", "draftCharge", "trickT", "trickPending", "startResult",
   "item", "itemCount", "item2", "item2Count", "finishTick", "prevBits",
 ] as const satisfies ReadonlyArray<keyof Kart>;
@@ -211,25 +202,8 @@ export class Missile {
   age = 0;
 }
 
-export class Oil {
-  active = false;
-  dist = 0;
-  d = 0;
-  life = 0;
-  owner = -1;
-  age = 0;
-}
-
-export class ResetWall {
-  active = false;
-  owner = -1;
-  dist = 0;
-  speed = 0;
-  ticksLeft = 0;
-}
-
 export type GameEvent =
-  | { readonly type: "hit"; readonly victim: number; readonly by: number; readonly cause: "missile" | "ram" }
+  | { readonly type: "hit"; readonly victim: number; readonly by: number }
   | { readonly type: "item"; readonly slot: number; readonly item: number }
   | { readonly type: "use"; readonly slot: number; readonly item: number }
   | { readonly type: "finish"; readonly slot: number; readonly place: number }
@@ -252,8 +226,6 @@ export class World {
   readonly karts: Kart[];
   readonly order: Kart[];
   readonly missiles: Missile[] = Array.from({ length: 96 }, () => new Missile());
-  readonly oils: Oil[] = Array.from({ length: 48 }, () => new Oil());
-  readonly reset = new ResetWall();
   readonly boxReadyTick: Int32Array;
   readonly coinReadyTick: Int32Array;
   readonly finishOrder: number[] = [];
@@ -261,7 +233,6 @@ export class World {
   tick = 0;
   phase: Phase = Phase.Countdown;
   phaseTicks = COUNTDOWN_TICKS;
-  private oilCursor = 0;
 
   constructor(options: WorldOptions) {
     this.seed = options.seed;
@@ -314,11 +285,7 @@ export class World {
     const karts = this.karts;
     for (let i = 0; i < karts.length; i++) stepKart(this, karts[i], inputs[i]);
     this.collideKarts();
-    if (!this.predict) {
-      this.stepMissiles();
-      this.stepOils();
-    }
-    this.stepReset();
+    if (!this.predict) this.stepMissiles();
     this.updateRanks();
   }
 
@@ -335,8 +302,7 @@ export class World {
       const a = karts[i];
       for (let j = i + 1; j < karts.length; j++) {
         const b = karts[j];
-        // AGI and the Nerf Bullet hit anything their aura touches, not just the chassis.
-        const reach = a.invincible !== b.invincible ? 3.6 : KART_RADIUS * 2;
+        const reach = KART_RADIUS * 2;
         let ds = (a.dist - b.dist) % L;
         if (ds > L / 2) ds -= L;
         if (ds < -L / 2) ds += L;
@@ -347,13 +313,6 @@ export class World {
         if (len >= reach || len < 1e-6) continue;
         const nx = ds / len;
         const ny = dd / len;
-        if (a.invincible !== b.invincible) {
-          if (!this.predict) {
-            const [attacker, victim, side] = a.invincible ? [a, b, -ny] : [b, a, ny];
-            knockOut(this, victim, attacker.slot, side === 0 ? 1 : Math.sign(side));
-          }
-          continue;
-        }
         const overlap = reach - len;
         const total = a.mass + b.mass;
         const pushA = (overlap * b.mass) / total;
@@ -402,53 +361,9 @@ export class World {
         if (ds < -L / 2) ds += L;
         if (Math.abs(ds) > 2.4 || Math.abs(kart.d - m.d) > 2.0) continue;
         m.active = false;
-        if (!kart.invincible) {
-          damage(this, kart, kart.perk === "tank" ? 17 : 34, m.owner);
-        }
+        damage(this, kart, 34, m.owner);
         break;
       }
-    }
-  }
-
-  private stepOils(): void {
-    const L = this.track.length;
-    for (const oil of this.oils) {
-      if (!oil.active) continue;
-      oil.age += DT;
-      oil.life -= DT;
-      if (oil.life <= 0) {
-        oil.active = false;
-        continue;
-      }
-      for (const kart of this.karts) {
-        if (kart.invincible || kart.z > 1 || kart.slickImmuneT > 0) continue;
-        // Nothing you drop can ever slow you down.
-        if (kart.slot === oil.owner) continue;
-        let ds = (kart.dist - oil.dist) % L;
-        if (ds > L / 2) ds -= L;
-        if (ds < -L / 2) ds += L;
-        if (ds * ds + (kart.d - oil.d) * (kart.d - oil.d) > 16) continue;
-        kart.slickT = kart.perk === "constitutional" ? 0.75 : 1.5;
-        kart.slickImmuneT = kart.slickT + 1;
-        kart.drifting = 0;
-      }
-    }
-  }
-
-  private stepReset(): void {
-    const reset = this.reset;
-    for (const kart of this.karts) kart.inReset = 0;
-    if (!reset.active) return;
-    reset.ticksLeft--;
-    if (reset.ticksLeft <= 0) {
-      reset.active = false;
-      return;
-    }
-    reset.speed += 9 * DT;
-    reset.dist += reset.speed * DT;
-    for (const kart of this.karts) {
-      if (kart.slot === reset.owner || kart.finished || kart.invincible) continue;
-      if (kart.dist < reset.dist) kart.inReset = 1;
     }
   }
 
@@ -483,31 +398,6 @@ export class World {
     m.life = 4;
     m.bounces = 0;
     m.age = 0;
-  }
-
-  spawnOil(owner: Kart): void {
-    const oil = this.oils[this.oilCursor];
-    this.oilCursor = (this.oilCursor + 1) % this.oils.length;
-    oil.active = true;
-    oil.owner = owner.slot;
-    oil.dist = owner.dist - 3.5;
-    oil.d = owner.d;
-    oil.life = 25;
-    oil.age = 0;
-  }
-
-  triggerReset(owner: Kart): void {
-    let back = Number.POSITIVE_INFINITY;
-    for (const kart of this.karts) {
-      if (kart.slot !== owner.slot && !kart.finished) back = Math.min(back, kart.dist);
-    }
-    if (!Number.isFinite(back)) back = owner.dist - 200;
-    const reset = this.reset;
-    reset.active = true;
-    reset.owner = owner.slot;
-    reset.dist = back - 40;
-    reset.speed = 32;
-    reset.ticksLeft = RESET_TICKS;
   }
 }
 
@@ -554,67 +444,38 @@ const spillGpus = (kart: Kart): void => {
 };
 
 const damage = (world: World, kart: Kart, amount: number, by: number): void => {
+  // Tank: half damage, half the spin-out.
+  const tank = kart.perk === "tank" ? 0.5 : 1;
   spillGpus(kart);
-  kart.hp -= amount;
+  kart.hp -= amount * tank;
   if (kart.hp <= 0) {
     kart.hp = kart.hpMax;
-    stun(kart, 2.2);
+    stun(kart, 2.2 * tank);
   } else {
-    stun(kart, 1.2);
+    stun(kart, 1.2 * tank);
   }
   kart.vz = 9;
   kart.z = Math.max(kart.z, 0.05);
-  world.events.push({ type: "hit", victim: kart.slot, by, cause: "missile" });
+  world.events.push({ type: "hit", victim: kart.slot, by });
 };
 
-/** AGI / Nerf Bullet contact: launch the victim up and sideways like a pinball. */
-const knockOut = (world: World, kart: Kart, by: number, side: number): void => {
-  if (kart.stunT > 0.4) return;
-  spillGpus(kart);
-  stun(kart, 1.4);
-  kart.kickV = side * 24;
-  kart.vz = 15;
-  kart.z = Math.max(kart.z, 0.05);
-  world.events.push({ type: "hit", victim: kart.slot, by, cause: "ram" });
-};
-
+/** Missiles up front, boosts at the back: the further behind you are, the likelier a boost. */
 const rollItem = (world: World, kart: Kart): number => {
   const n = world.karts.length;
   const frac = n > 1 ? kart.rank / (n - 1) : 0;
-  const leader = world.order[0];
-  const gap = leader ? leader.dist - kart.dist : 0;
-  const r = hash01(world.seed, world.tick, kart.slot * 31 + 7);
-  const resetFree = !world.reset.active;
-  let table: ReadonlyArray<readonly [number, number]>;
-  if (frac > 0.85 && gap > 250 && n >= 4) {
-    table = [[ItemKind.NerfBullet, 45], [ItemKind.Agi, 30], [ItemKind.TripleMissile, 25]];
-  } else if (frac > 0.6) {
-    table = [[ItemKind.Agi, 32], [ItemKind.TripleMissile, 25], [ItemKind.Missile, 15], [ItemKind.Reset, resetFree ? 16 : 0], [ItemKind.Oil, 12]];
-  } else if (frac > 0.25) {
-    table = [[ItemKind.Missile, 30], [ItemKind.TripleMissile, 22], [ItemKind.Oil, 20], [ItemKind.Reset, resetFree ? 16 : 0], [ItemKind.Agi, 12]];
-  } else {
-    table = [[ItemKind.Missile, 42], [ItemKind.Oil, 40], [ItemKind.TripleMissile, 10], [ItemKind.Reset, resetFree ? 8 : 0]];
-  }
-  let total = 0;
-  for (const [, w] of table) total += w;
-  let pick = r * total;
-  for (const [item, w] of table) {
-    pick -= w;
-    if (pick < 0) return item;
-  }
-  return ItemKind.Missile;
+  const boostOdds = 0.25 + frac * 0.5;
+  return hash01(world.seed, world.tick, kart.slot * 31 + 7) < boostOdds ? ItemKind.Boost : ItemKind.Missile;
 };
 
 const giveItem = (world: World, kart: Kart): void => {
   const item = rollItem(world, kart);
-  const count = item === ItemKind.TripleMissile ? 3 : 1;
   if (kart.item === ItemKind.None) {
     kart.item = item;
-    kart.itemCount = count;
+    kart.itemCount = 1;
     kart.itemRollT = ITEM_ROLL_SECONDS;
   } else if (kart.perk === "twin-engine" && kart.item2 === ItemKind.None) {
     kart.item2 = item;
-    kart.item2Count = count;
+    kart.item2Count = 1;
   } else {
     return;
   }
@@ -624,30 +485,8 @@ const giveItem = (world: World, kart: Kart): void => {
 const useItem = (world: World, kart: Kart, backward: boolean): void => {
   const item = kart.item;
   if (item === ItemKind.None || kart.itemRollT > 0) return;
-  const timed = kart.perk === "plugins" ? 1.2 : 1;
-  switch (item) {
-    case ItemKind.Missile:
-    case ItemKind.TripleMissile:
-      world.spawnMissile(kart, backward);
-      break;
-    case ItemKind.Oil:
-      world.spawnOil(kart);
-      break;
-    case ItemKind.Reset:
-      world.triggerReset(kart);
-      break;
-    case ItemKind.NerfBullet:
-      kart.bulletT = 6 * timed;
-      kart.stunT = 0;
-      kart.drifting = 0;
-      break;
-    case ItemKind.Agi:
-      kart.agiT = 7 * timed;
-      kart.stunT = 0;
-      kart.boostT = Math.max(kart.boostT, 1);
-      kart.boostKind = BoostKind.Item;
-      break;
-  }
+  if (item === ItemKind.Missile) world.spawnMissile(kart, backward);
+  else giveBoost(kart, BOOST_ITEM_SECONDS * (kart.perk === "plugins" ? 1.15 : 1), BoostKind.Item);
   world.events.push({ type: "use", slot: kart.slot, item });
   kart.itemCount--;
   if (kart.itemCount <= 0) {
@@ -698,7 +537,7 @@ const applyFeatures = (world: World, kart: Kart): void => {
     if (f.kind === FeatureKind.Boost) {
       giveBoost(kart, 1.8, BoostKind.Pad);
     } else if (f.kind === FeatureKind.Slow) {
-      if (kart.bulletT <= 0 && kart.agiT <= 0) kart.slowZone = 1;
+      kart.slowZone = 1;
     } else if (f.kind === FeatureKind.Ramp || f.kind === FeatureKind.Launch) {
       if (kart.z < 0.3 && kart.vz <= 0 && kart.speed > 10) {
         const launch = f.kind === FeatureKind.Launch;
@@ -746,16 +585,12 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
   if (kart.boostT > 0) kart.boostT -= DT;
   if (kart.boostT <= 0) kart.boostKind = BoostKind.None;
   if (kart.stunT > 0) kart.stunT -= DT;
-  if (kart.slickT > 0) kart.slickT -= DT;
-  if (kart.slickImmuneT > 0) kart.slickImmuneT -= DT;
   if (kart.wallT > 0) kart.wallT -= DT;
-  if (kart.bulletT > 0) kart.bulletT -= DT;
-  if (kart.agiT > 0) kart.agiT -= DT;
   if (kart.itemRollT > 0) kart.itemRollT -= DT;
   if (kart.trickT > 0) kart.trickT -= DT;
 
   // Tap drift in the air to pull a trick; land it for a boost.
-  if (!grounded && control && pressed & InputBit.Drift && kart.airT > 0.06 && !kart.trickPending && kart.bulletT <= 0) {
+  if (!grounded && control && pressed & InputBit.Drift && kart.airT > 0.06 && !kart.trickPending) {
     kart.trickT = 0.45;
     kart.trickPending = 1;
   }
@@ -772,81 +607,68 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
   // Keep a wall flag briefly so the HUD can name it; everything else is live state.
   kart.slowFlags = (kart.slowFlags & SlowFlag.Wall && kart.wallT > 0.1 ? SlowFlag.Wall : 0)
     | (kart.slowZone ? SlowFlag.SlowZone : 0)
-    | (kart.slickT > 0 ? SlowFlag.Oil : 0)
-    | (kart.inReset ? SlowFlag.Reset : 0)
     | (kart.stunT > 0 ? SlowFlag.Hit : 0);
-  let steer = control ? Math.max(-1, Math.min(1, input.steer)) : 0;
-  if (kart.slickT > 0) steer = steer * 0.35 + Math.sin(world.tick * 0.33 + kart.slot) * 0.9;
+  const steer = control ? Math.max(-1, Math.min(1, input.steer)) : 0;
 
-  if (kart.bulletT > 0) {
-    kart.speed += (BULLET_SPEED - kart.speed) * Math.min(1, 3 * DT);
-    const want = Math.max(-0.45, Math.min(0.45, -kart.d * 0.08));
-    kart.heading += (want - kart.heading) * Math.min(1, 6 * DT);
-    kart.slip = 0;
-    kart.drifting = 0;
+  let maxSpeed = kart.maxSpeed;
+  let accel = kart.accel;
+  const gpuBonus = 1 + kart.gpus * GPU_BONUS;
+  maxSpeed *= gpuBonus * (1 + comebackBonus(world, kart));
+  accel *= gpuBonus;
+  if (updateDraft(world, kart, grounded)) maxSpeed *= 1.04;
+  if (kart.boostT > 0) {
+    maxSpeed *= kart.perk === "unhinged" ? 1.38 : 1.36;
+    accel *= 2.2;
+  }
+  if (kart.slowZone) maxSpeed *= kart.perk === "constitutional" ? 0.85 : 0.55 + kart.traction * 0.2;
+
+  const throttle = control && !engineCut && (throttleHeld || kart.boostT > 0);
+  const brake = control && (bits & InputBit.Brake) !== 0;
+  if (throttle && kart.speed < maxSpeed) {
+    const ratio = Math.max(0, kart.speed) / maxSpeed;
+    kart.speed = Math.min(maxSpeed, kart.speed + accel * (1 - 0.7 * ratio) * DT);
+  } else if (kart.speed > maxSpeed) {
+    // Momentum: after a boost the extra speed fades out gently instead of cutting off.
+    kart.speed -= (kart.speed - maxSpeed) * Math.min(1, (kart.slowZone ? 3 : 0.55) * DT);
+  } else if (brake) {
+    kart.speed = kart.speed > 0 ? kart.speed - 48 * DT : Math.max(-14, kart.speed - 20 * DT);
   } else {
-    let maxSpeed = kart.maxSpeed;
-    let accel = kart.accel;
-    const gpuBonus = 1 + kart.gpus * GPU_BONUS;
-    maxSpeed *= gpuBonus * (1 + comebackBonus(world, kart));
-    accel *= gpuBonus;
-    if (updateDraft(world, kart, grounded)) maxSpeed *= 1.04;
-    if (kart.boostT > 0) {
-      maxSpeed *= kart.perk === "unhinged" ? 1.42 : 1.36;
-      accel *= 2.2;
-    }
-    if (kart.agiT > 0) maxSpeed *= 1.3;
-    if (kart.slowZone) maxSpeed *= 0.55 + kart.traction * 0.2;
-    if (kart.inReset) maxSpeed *= 0.42;
+    // Off the throttle the kart slows down noticeably: drag plus rolling resistance.
+    const drop = (Math.abs(kart.speed) * 1.1 + 7) * DT;
+    kart.speed = Math.abs(kart.speed) <= drop ? 0 : kart.speed - Math.sign(kart.speed) * drop;
+  }
+  if (!control) kart.speed -= kart.speed * 2.5 * DT;
 
-    const throttle = control && !engineCut && (throttleHeld || kart.boostT > 0);
-    const brake = control && (bits & InputBit.Brake) !== 0;
-    if (throttle && kart.speed < maxSpeed) {
-      const ratio = Math.max(0, kart.speed) / maxSpeed;
-      kart.speed = Math.min(maxSpeed, kart.speed + accel * (1 - 0.7 * ratio) * DT);
-    } else if (kart.speed > maxSpeed) {
-      // Momentum: after a boost the extra speed fades out gently instead of cutting off.
-      kart.speed -= (kart.speed - maxSpeed) * Math.min(1, (kart.slowZone || kart.inReset ? 3 : 0.55) * DT);
-    } else if (brake) {
-      kart.speed = kart.speed > 0 ? kart.speed - 48 * DT : Math.max(-14, kart.speed - 20 * DT);
-    } else {
-      // Off the throttle the kart slows down noticeably: drag plus rolling resistance.
-      const drop = (Math.abs(kart.speed) * 1.1 + 7) * DT;
-      kart.speed = Math.abs(kart.speed) <= drop ? 0 : kart.speed - Math.sign(kart.speed) * drop;
-    }
-    if (!control) kart.speed -= kart.speed * 2.5 * DT;
-
-    const driftHeld = (bits & InputBit.Drift) !== 0;
-    if (control && grounded && driftHeld && !kart.drifting && Math.abs(steer) > 0.3 && kart.speed > 14) {
-      kart.drifting = 1;
-      kart.driftDir = Math.sign(steer);
+  const driftHeld = (bits & InputBit.Drift) !== 0;
+  if (control && grounded && driftHeld && !kart.drifting && Math.abs(steer) > 0.3 && kart.speed > 14) {
+    kart.drifting = 1;
+    kart.driftDir = Math.sign(steer);
+    kart.driftCharge = 0;
+  }
+  if (kart.drifting) {
+    kart.driftCharge += DT;
+    if (!driftHeld || kart.speed < 10 || !control) {
+      const charge = kart.driftCharge;
+      const story = kart.perk === "storyteller" ? 1.4 : 1;
+      if (control && charge >= DRIFT_TIER3) giveBoost(kart, 1.8 * story, BoostKind.UltraDrift);
+      else if (control && charge >= DRIFT_TIER2) giveBoost(kart, 1.25 * story, BoostKind.SuperDrift);
+      else if (control && charge >= DRIFT_TIER1) giveBoost(kart, 0.7 * story, BoostKind.Drift);
+      kart.drifting = 0;
       kart.driftCharge = 0;
     }
-    if (kart.drifting) {
-      kart.driftCharge += DT;
-      if (!driftHeld || kart.speed < 10 || !control) {
-        const charge = kart.driftCharge;
-        const story = kart.perk === "storyteller" ? 1.4 : 1;
-        if (control && charge >= DRIFT_TIER3) giveBoost(kart, 1.8 * story, BoostKind.UltraDrift);
-        else if (control && charge >= DRIFT_TIER2) giveBoost(kart, 1.25 * story, BoostKind.SuperDrift);
-        else if (control && charge >= DRIFT_TIER1) giveBoost(kart, 0.7 * story, BoostKind.Drift);
-        kart.drifting = 0;
-        kart.driftCharge = 0;
-      }
-    }
-
-    const absSpeed = Math.abs(kart.speed);
-    const speedFactor = Math.min(1, absSpeed / 10) * (1 - 0.3 * Math.min(1, absSpeed / 60));
-    let yaw = kart.drifting
-      ? kart.steerRate * speedFactor * (kart.driftDir * 0.8 + steer * 0.5)
-      : steer * kart.steerRate * speedFactor * (kart.speed < 0 ? -1 : 1);
-    if (!grounded) yaw *= 0.5;
-    kart.heading += yaw * DT;
-
-    const slipTarget = kart.drifting ? kart.driftDir * 0.38 : 0;
-    const slipRate = kart.drifting ? 3 : kart.slickT > 0 ? 0.8 : kart.grip;
-    kart.slip += (slipTarget - kart.slip) * Math.min(1, slipRate * DT);
   }
+
+  const absSpeed = Math.abs(kart.speed);
+  const speedFactor = Math.min(1, absSpeed / 10) * (1 - 0.3 * Math.min(1, absSpeed / 60));
+  let yaw = kart.drifting
+    ? kart.steerRate * speedFactor * (kart.driftDir * 0.8 + steer * 0.5)
+    : steer * kart.steerRate * speedFactor * (kart.speed < 0 ? -1 : 1);
+  if (!grounded) yaw *= 0.5;
+  kart.heading += yaw * DT;
+
+  const slipTarget = kart.drifting ? kart.driftDir * 0.38 : 0;
+  const slipRate = kart.drifting ? 3 : kart.grip;
+  kart.slip += (slipTarget - kart.slip) * Math.min(1, slipRate * DT);
 
   if (grounded) {
     kart.speed -= SLOPE_GRAVITY * surface.slope * (surface.loop ? 0.5 : 1) * DT;
@@ -873,8 +695,8 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
       kart.heading = Math.abs(h) < Math.PI / 2 ? h * 0.35 : Math.sign(h) * (Math.PI - (Math.PI - Math.abs(h)) * 0.35);
       kart.slip = 0;
       // Walls are glancing: a scrape costs almost nothing, only a head-on hit hurts.
-      if (kart.wallT <= 0 && kart.bulletT <= 0) {
-        const loss = impact * impact * (0.32 - kart.traction * 0.12);
+      if (kart.wallT <= 0) {
+        const loss = impact * impact * (0.32 - kart.traction * 0.12) * (kart.perk === "constitutional" ? 0.5 : 1);
         kart.speed *= 1 - loss;
         if (loss > 0.03) kart.slowFlags |= SlowFlag.Wall;
       }
