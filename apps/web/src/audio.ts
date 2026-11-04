@@ -156,7 +156,6 @@ export class Sound {
   rocket(result: number): void {
     if (result === 2) this.burst(0.5, 500, { sweep: 5000, gain: 0.25, q: 0.7 });
     else if (result === 1) this.burst(0.35, 500, { sweep: 2500, gain: 0.18 });
-    else if (result === -1) this.tone(160, 0.3, { type: "sine", slide: 70, gain: 0.18 });
   }
 
   boost(kind: number): void {

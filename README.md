@@ -19,7 +19,7 @@ Controls: `W A S D` or arrow keys to drive, `Space` to drift (sparks go blue, th
 
 ## What makes it fun
 
-- **Rocket start:** press `W` just before "Go" for a boost; hold it too early and the engine floods.
+- **Rocket start:** press `W` just before "Go" for a boost. Holding it the whole countdown is just a normal start.
 - **Drift tiers:** sparks go white, blue, pink, purple. Release for a mini, super or ULTRA boost.
 - **Tricks:** tap `Space` in the air off any ramp, crest or bumper, then land it for a boost.
 - **Items:** item boxes give an Outage Missile (`E` fires ahead, `Q` behind) or a Compute Boost.

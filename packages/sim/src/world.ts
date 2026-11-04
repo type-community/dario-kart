@@ -24,7 +24,6 @@ const COIN_RESPAWN_TICKS = 10 * TICK_RATE;
 /** Rocket start window: throttle pressed this many ticks before GO. */
 export const START_PERFECT_TICKS = 24;
 export const START_GOOD_TICKS = 54;
-export const START_FLOOD_TICKS = 100;
 /** Far behind the leader, a little extra top speed keeps the race close (max +5%). */
 const comebackBonus = (world: World, kart: Kart): number => {
   const leader = world.order[0];
@@ -134,7 +133,7 @@ export class Kart {
   trickT = 0;
   trickPending = 0;
   startHold = 0;
-  /** -1 flooded, 0 normal, 1 good, 2 perfect */
+  /** 0 normal, 1 good, 2 perfect */
   startResult = 0;
   botStartTick = 0;
   botSkill = 0.85;
@@ -402,6 +401,7 @@ export class World {
 }
 
 const applyStart = (kart: Kart): void => {
+  // Holding the throttle too early is just a normal start, never a penalty.
   const held = kart.startHold;
   if (held <= 0) kart.startResult = 0;
   else if (held <= START_PERFECT_TICKS) {
@@ -410,9 +410,6 @@ const applyStart = (kart: Kart): void => {
   } else if (held <= START_GOOD_TICKS) {
     kart.startResult = 1;
     giveBoost(kart, 0.8, BoostKind.Rocket);
-  } else if (held >= START_FLOOD_TICKS) {
-    kart.startResult = -1;
-    kart.stunT = 0.9;
   } else kart.startResult = 0;
   kart.startHold = 0;
 };
