@@ -22,6 +22,7 @@ Controls: `W A S D` or arrow keys to drive, `Space` to drift (sparks go blue, th
 - **Rocket start:** press `W` just before "Go" for a boost; hold it too early and the engine floods.
 - **Drift tiers:** sparks go white, blue, pink, purple. Release for a mini, super or ULTRA boost.
 - **Tricks:** tap `Space` in the air off any ramp, crest or bumper, then land it for a boost.
+- **Items:** item boxes give an Outage Missile (`E` fires ahead, `Q` behind) or a Compute Boost.
 - **Slipstream:** tuck in behind a rival and a charge builds into a boost.
 - **GPUs:** green chips on risky lines (loops, ramp arcs, banked walls). Each adds 1% top speed, up to 10; hits make you drop 3.
 - **Gentle catch-up:** far behind the leader you get up to +5% top speed, on top of position-weighted items.
@@ -66,7 +67,7 @@ Close codes worth knowing: `1000` the player left, `1001` the browser went away 
 ```
 packages/sim      deterministic simulation shared by client, server and bots
   track.ts        procedural tracks (seed + theme + player count), in track space (s, d)
-  world.ts        60 Hz fixed-step kart physics, items, collisions, the Reset
+  world.ts        60 Hz fixed-step kart physics, items, collisions
   bot.ts          track-following AI (bots, finished players, headless tests)
   protocol.ts     JSON lobby messages, binary inputs and snapshots
 apps/server       Cloudflare Worker + one Durable Object per lobby (Alchemy, Effect)
@@ -84,7 +85,7 @@ alchemy.run.ts    the whole stack: game Worker + Vite site
 - Kart stats are tuned with `scripts/balance.ts` (constants in `STAT` in `world.ts`): every kart's average finish is within about 0.05 of even across hundreds of bot races.
 - The server is authoritative. Clients predict their own kart, replay unacknowledged inputs on each snapshot, and render other karts about 115 ms in the past.
 - Races are 2 laps and about 50 seconds. Tracks get a little longer and wider with more racers (about 1.3 km for 8 players, 1.6 km for 30, 2.1 km for 100).
-- Item odds depend on race position. The Nerf Bullet only goes to the back 15% of a 4+ kart race when they're more than 250 m behind the leader.
+- Item boxes give one of two items: an Outage Missile or a Compute Boost. The leader gets a boost 25% of the time and last place 75%, so missiles go to the front and boosts to the back.
 - Accounts are ephemeral: a random id and your picks live in `localStorage`.
 
 ## Deploying

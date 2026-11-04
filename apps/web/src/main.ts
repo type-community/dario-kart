@@ -1,6 +1,6 @@
 import "./style.css";
 import {
-  CHARACTERS, KARTS, KICKED, LAPS, type RaceResult, type RaceSlot, type ServerMessage, THEMES, TICK_RATE, type ThemeId, kartById,
+  CHARACTERS, KARTS, KICKED, LAPS, PROTOCOL_VERSION, type RaceResult, type RaceSlot, type ServerMessage, THEMES, TICK_RATE, type ThemeId, kartById,
 } from "@dario-kart/sim";
 import { sound } from "./audio.ts";
 import { Controls } from "./controls.ts";
@@ -155,7 +155,7 @@ const newCode = () => {
 };
 
 const hello = () => ({
-  t: "hello" as const, id: profile.id, name: profile.name || "Racer", character: profile.character, kart: profile.kart,
+  t: "hello" as const, v: PROTOCOL_VERSION, id: profile.id, name: profile.name || "Racer", character: profile.character, kart: profile.kart,
   primary: profile.primary, secondary: profile.secondary,
 });
 
@@ -228,6 +228,11 @@ const sendNetStats = (final: boolean) => {
 net.onMessage = (msg: ServerMessage) => {
   switch (msg.t) {
     case "lobby":
+      if (msg.v !== PROTOCOL_VERSION) {
+        // Lobbies keep running the code they started on for a while after a deploy.
+        goHome("This lobby is still on the previous version of Dario Kart. Start a new lobby, or try again in a few minutes.", false);
+        break;
+      }
       lobby = { code: msg.code, players: msg.players, track: msg.track, bots: msg.bots, racing: msg.racing, you: msg.you };
       if (screen.kind === "landing" || screen.kind === "lobby") go({ kind: "lobby" });
       else if (screen.kind === "race" && !practicing && !msg.racing) {

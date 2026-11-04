@@ -38,7 +38,7 @@ const meter = (value: number) =>
 export const landingView = (profile: Profile, code: string, error: string) => `
   <section class="landing">
     <h1 class="wordmark">Dario<br />Kart</h1>
-    <p class="pitch">Ten AI lab CEOs, seven model-powered karts, one Reset. Lobbies hold up to 100 drivers, and the track grows with the field.</p>
+    <p class="pitch">Ten AI lab CEOs, seven model-powered karts, two items. Lobbies hold up to 100 drivers, and the track grows with the field.</p>
     <form data-form="landing" novalidate>
       <div class="field">
         <label for="name">Your name</label>
@@ -72,7 +72,7 @@ const driverPicker = (profile: Profile) => `
 
 const kartPicker = (profile: Profile) => `
   <div class="karts" role="group" aria-label="Kart">
-    <div class="kart-row header"><span></span><span title="Top speed">Speed</span><span title="Turning and acceleration">Handling</span><span title="Traction: keeps your speed through walls, oil and slow zones">Reliability</span><span title="Shrugs off hits and recovers faster">Durability</span></div>
+    <div class="kart-row header"><span></span><span title="Top speed">Speed</span><span title="Turning and acceleration">Handling</span><span title="Traction: keeps your speed through walls and slow zones">Reliability</span><span title="Shrugs off hits and recovers faster">Durability</span></div>
     ${KARTS.map((k) => {
       const selected = k.id === profile.kart;
       return `

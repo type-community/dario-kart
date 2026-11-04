@@ -2,7 +2,7 @@ import {
   CHARACTERS, type ClientMessage, GapStats, type Input, KARTS, type LobbyPlayer, Phase,
   type RaceResult, type RaceSlot, SNAPSHOT_ACK_OFFSET, type ServerMessage, THEMES, TICK_RATE,
   type ThemeId, World, botInput, characterIndex, decodeInputs, encodeSnapshot, kartIndex,
-  KICKED, type NetReport, cleanNetReport, kartById, makeInput, snapshotSize, validColor,
+  KICKED, PROTOCOL_VERSION, type NetReport, cleanNetReport, kartById, makeInput, snapshotSize, validColor,
 } from "@dario-kart/sim";
 
 /**
@@ -222,6 +222,12 @@ export class RaceRoom {
     }
     switch (msg.t) {
       case "hello": {
+        if (msg.v !== PROTOCOL_VERSION) {
+          // A tab from before a deploy would misread this server's snapshots.
+          this.send(conn, { t: "error", message: "Dario Kart was updated. Reload the page to keep playing." });
+          conn.close(1000, "Outdated client");
+          return;
+        }
         const existing = this.players.get(conn);
         const info: PlayerInfo = existing?.info ?? {
           id: typeof msg.id === "string" ? msg.id.slice(0, 64) : crypto.randomUUID(),
@@ -389,7 +395,7 @@ export class RaceRoom {
   }
 
   private lobbyMessage(you = ""): Extract<ServerMessage, { t: "lobby" }> {
-    return { t: "lobby", code: this.code, players: this.lobbyPlayers(), track: this.track, bots: this.bots, racing: this.racing, you };
+    return { t: "lobby", v: PROTOCOL_VERSION, code: this.code, players: this.lobbyPlayers(), track: this.track, bots: this.bots, racing: this.racing, you };
   }
 
   /** Each socket is told which entry is its own: a player id can be in the lobby from several tabs. */
@@ -522,17 +528,11 @@ export class RaceRoom {
     switch (event.type) {
       case "hit":
         if (event.by < 0 || event.by === event.victim) return null;
-        return event.cause === "missile"
-          ? `${name(event.by)} took down ${name(event.victim)} with an Outage Missile`
-          : `${name(event.by)} steamrolled ${name(event.victim)}`;
-      case "use":
-        if (event.item === 4) return `${name(event.slot)} triggered THE RESET`;
-        if (event.item === 6) return `${name(event.slot)}: Internal AGI Achieved`;
-        if (event.item === 5) return `${name(event.slot)} fired up the Nerf Bullet`;
-        return null;
+        return `${name(event.by)} took down ${name(event.victim)} with an Outage Missile`;
       case "finish":
         return `${name(event.slot)} finished ${ordinal(event.place)}`;
       case "item":
+      case "use":
       case "gpu":
         return null;
     }

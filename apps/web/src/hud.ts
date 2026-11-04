@@ -4,28 +4,18 @@ import {
 
 const GLYPHS: Record<number, string> = {
   [ItemKind.Missile]: "🚀",
-  [ItemKind.TripleMissile]: "🚀",
-  [ItemKind.Oil]: "🛢️",
-  [ItemKind.Reset]: "⏪",
-  [ItemKind.NerfBullet]: "🔫",
-  [ItemKind.Agi]: "🧠",
+  [ItemKind.Boost]: "⚡",
 };
-const REEL = [GLYPHS[1], GLYPHS[3], GLYPHS[4], GLYPHS[6], GLYPHS[5]];
+const REEL = [GLYPHS[ItemKind.Missile], GLYPHS[ItemKind.Boost]];
 
 const ITEM_HINT: Record<number, string> = {
   [ItemKind.Missile]: "E fires ahead, Q fires behind",
-  [ItemKind.TripleMissile]: "Three shots. E ahead, Q behind",
-  [ItemKind.Oil]: "E drops a slick behind you",
-  [ItemKind.Reset]: "E sends a slow-down wall at everyone behind you",
-  [ItemKind.NerfBullet]: "E turns you into an unstoppable bullet",
-  [ItemKind.Agi]: "E: invincible, faster, knocks out anyone you touch",
+  [ItemKind.Boost]: "E for a burst of speed",
 };
 
 const SLOW_CAUSES = [
   { flag: SlowFlag.Hit, icon: "💥", title: "Hit!", body: "Spun out. You'll recover in a moment" },
-  { flag: SlowFlag.Reset, icon: "⏪", title: "Caught by The Reset", body: "Slowed until the wall passes" },
   { flag: SlowFlag.SlowZone, icon: "⛔", title: "Slow zone", body: "Stay off the red stripes" },
-  { flag: SlowFlag.Oil, icon: "🛢️", title: "Oil slick", body: "Steering is slippery for a second" },
   { flag: SlowFlag.Wall, icon: "🧱", title: "Hit the wall", body: "Glance off walls instead of hitting them head on" },
 ] as const;
 
@@ -37,6 +27,7 @@ const BOOST_NAMES: Record<number, string> = {
   [BoostKind.UltraDrift]: "ULTRA boost",
   [BoostKind.Draft]: "Slipstream boost",
   [BoostKind.Trick]: "Trick boost",
+  [BoostKind.Item]: "Compute Boost",
 };
 
 export interface HudState {
@@ -57,8 +48,6 @@ export interface HudState {
   twin: boolean;
   countdown: number;
   racing: boolean;
-  resetActive: boolean;
-  resetSafe: boolean;
   status: string;
   statusBad: boolean;
   finishedPlace: number;
@@ -147,7 +136,6 @@ export class Hud {
         <div class="tach" data-k="tach"></div>
         <div class="hp"><i data-k="hp"></i></div>
       </div>
-      <div class="hud-reset" data-k="reset" hidden>The Reset is coming. Floor it.</div>
       <div class="hud-spectate" data-k="spectate" hidden>Spectating. You'll join the next race.</div>
     `;
     for (const node of root.querySelectorAll<HTMLElement>("[data-k]")) this.el[node.dataset.k!] = node;
@@ -270,7 +258,7 @@ export class Hud {
     this.calloutTimer = setTimeout(() => (el.hidden = true), 1100);
   }
 
-  update(s: HudState, dots: ReadonlyArray<MapDot>, resetDist: number | null): void {
+  update(s: HudState, dots: ReadonlyArray<MapDot>): void {
     const pos = ordinal(s.finishedPlace > 0 ? s.finishedPlace : s.place);
     this.set("place", pos.n);
     this.set("of", `${pos.suffix} / ${s.total}`);
@@ -386,7 +374,6 @@ export class Hud {
     }
     this.el.tips.hidden = s.spectating || !(countdown > 0 || (s.racing && s.raceSeconds < 4));
 
-    this.el.reset.hidden = !(s.resetActive && !s.resetSafe);
     this.set("status", s.status);
     this.el.status.classList.toggle("bad", s.statusBad);
 
@@ -406,13 +393,6 @@ export class Hud {
         p.z = (track.pz[i] + rz * d) * scale + oy;
         return p;
       };
-      if (resetDist !== null) {
-        const r = project(resetDist, 0);
-        ctx.fillStyle = "#ff3d7f";
-        ctx.beginPath();
-        ctx.arc(r.x, r.z, 12, 0, Math.PI * 2);
-        ctx.fill();
-      }
       for (const dot of dots) {
         if (dot.me) continue;
         const q = project(dot.dist, dot.d);

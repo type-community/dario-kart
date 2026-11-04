@@ -5,6 +5,13 @@ import { KART_NET_FIELDS, type Kart, type World } from "./world.ts";
 
 /** Lobby/control traffic is JSON text; race traffic is binary. */
 
+/**
+ * Bumped whenever the wire format changes. A tab from before a deploy (or a
+ * new tab reaching a lobby still on old code) is told to reload instead of
+ * misreading snapshots.
+ */
+export const PROTOCOL_VERSION = 2;
+
 /** Kart paint: primary body color and secondary accent/livery color. */
 export interface Paint {
   readonly primary: number;
@@ -40,7 +47,7 @@ export interface RaceResult {
 }
 
 export type ClientMessage =
-  | { readonly t: "hello"; readonly id: string; readonly name: string; readonly character: string; readonly kart: string; readonly primary: number; readonly secondary: number }
+  | { readonly t: "hello"; readonly v: number; readonly id: string; readonly name: string; readonly character: string; readonly kart: string; readonly primary: number; readonly secondary: number }
   | { readonly t: "pick"; readonly character: string; readonly kart: string; readonly primary: number; readonly secondary: number }
   | { readonly t: "settings"; readonly track: ThemeId; readonly bots: number }
   | { readonly t: "start" }
@@ -54,7 +61,7 @@ export type ClientMessage =
   | { readonly t: "netStats"; readonly seed: number; readonly final: boolean; readonly report: NetReport };
 
 export type ServerMessage =
-  | { readonly t: "lobby"; readonly code: string; readonly players: ReadonlyArray<LobbyPlayer>; readonly track: ThemeId; readonly bots: number; readonly racing: boolean; readonly you: string }
+  | { readonly t: "lobby"; readonly v: number; readonly code: string; readonly players: ReadonlyArray<LobbyPlayer>; readonly track: ThemeId; readonly bots: number; readonly racing: boolean; readonly you: string }
   | { readonly t: "race"; readonly seed: number; readonly track: ThemeId; readonly laps: number; readonly slots: ReadonlyArray<RaceSlot>; readonly you: number }
   | { readonly t: "results"; readonly results: ReadonlyArray<RaceResult> }
   | { readonly t: "event"; readonly text: string }
@@ -110,12 +117,12 @@ export const decodeInputs = (view: DataView, race: number, onInput: (seq: number
 
 const FIELDS = KART_NET_FIELDS.length;
 
+const HEADER_BYTES = 14;
+
 export const snapshotSize = (world: World): number => {
   let missiles = 0;
   for (const m of world.missiles) if (m.active) missiles++;
-  let oils = 0;
-  for (const o of world.oils) if (o.active) oils++;
-  return 32 + world.karts.length * FIELDS * 4 + 2 + missiles * 12 + 2 + oils * 12 + 2 + Math.ceil(world.boxReadyTick.length / 8)
+  return HEADER_BYTES + world.karts.length * FIELDS * 4 + 2 + missiles * 12 + 2 + Math.ceil(world.boxReadyTick.length / 8)
     + 2 + Math.ceil(world.coinReadyTick.length / 8);
 };
 
@@ -130,13 +137,6 @@ export const encodeSnapshot = (world: World, out: DataView): number => {
   out.setUint8(o, world.phase); o += 1;
   out.setUint16(o, world.phaseTicks); o += 2;
   out.setUint16(o, world.karts.length); o += 2;
-  const reset = world.reset;
-  out.setUint8(o, reset.active ? 1 : 0); o += 1;
-  out.setInt16(o, reset.owner); o += 2;
-  out.setFloat32(o, reset.dist); o += 4;
-  out.setFloat32(o, reset.speed); o += 4;
-  out.setUint16(o, reset.ticksLeft); o += 2;
-  o = 32;
   for (const kart of world.karts) {
     for (let f = 0; f < FIELDS; f++) {
       out.setFloat32(o, kart[KART_NET_FIELDS[f]] as number);
@@ -155,18 +155,6 @@ export const encodeSnapshot = (world: World, out: DataView): number => {
     count++;
   }
   out.setUint16(countAt, count);
-  const oilAt = o;
-  count = 0;
-  o += 2;
-  for (const oil of world.oils) {
-    if (!oil.active) continue;
-    out.setFloat32(o, oil.dist);
-    out.setFloat32(o + 4, oil.d);
-    out.setFloat32(o + 8, oil.life);
-    o += 12;
-    count++;
-  }
-  out.setUint16(oilAt, count);
   for (const ready of [world.boxReadyTick, world.coinReadyTick]) {
     out.setUint16(o, ready.length); o += 2;
     for (let b = 0; b < ready.length; b += 8) {
@@ -185,11 +173,6 @@ export interface SnapshotHeader {
   phase: number;
   phaseTicks: number;
   kartCount: number;
-  resetActive: boolean;
-  resetOwner: number;
-  resetDist: number;
-  resetSpeed: number;
-  resetTicksLeft: number;
 }
 
 export interface NetMissile {
@@ -198,18 +181,11 @@ export interface NetMissile {
   heading: number;
 }
 
-export interface NetOil {
-  dist: number;
-  d: number;
-  life: number;
-}
-
 export interface DecodedSnapshot {
   readonly header: SnapshotHeader;
   /** kartCount × KART_NET_FIELDS.length floats */
   readonly karts: Float32Array;
   readonly missiles: NetMissile[];
-  readonly oils: NetOil[];
   readonly boxesReady: Uint8Array;
   readonly coinsReady: Uint8Array;
 }
@@ -222,24 +198,14 @@ export const decodeSnapshot = (view: DataView): DecodedSnapshot | null => {
     phase: view.getUint8(9),
     phaseTicks: view.getUint16(10),
     kartCount: view.getUint16(12),
-    resetActive: view.getUint8(14) === 1,
-    resetOwner: view.getInt16(15),
-    resetDist: view.getFloat32(17),
-    resetSpeed: view.getFloat32(21),
-    resetTicksLeft: view.getUint16(25),
   };
-  let o = 32;
+  let o = HEADER_BYTES;
   const karts = new Float32Array(header.kartCount * FIELDS);
   for (let i = 0; i < karts.length; i++, o += 4) karts[i] = view.getFloat32(o);
   const missiles: NetMissile[] = [];
-  let n = view.getUint16(o); o += 2;
+  const n = view.getUint16(o); o += 2;
   for (let i = 0; i < n; i++, o += 12) {
     missiles.push({ dist: view.getFloat32(o), d: view.getFloat32(o + 4), heading: view.getFloat32(o + 8) });
-  }
-  const oils: NetOil[] = [];
-  n = view.getUint16(o); o += 2;
-  for (let i = 0; i < n; i++, o += 12) {
-    oils.push({ dist: view.getFloat32(o), d: view.getFloat32(o + 4), life: view.getFloat32(o + 8) });
   }
   const readBits = () => {
     const count = view.getUint16(o); o += 2;
@@ -250,7 +216,7 @@ export const decodeSnapshot = (view: DataView): DecodedSnapshot | null => {
   };
   const boxesReady = readBits();
   const coinsReady = readBits();
-  return { header, karts, missiles, oils, boxesReady, coinsReady };
+  return { header, karts, missiles, boxesReady, coinsReady };
 };
 
 export const applyKartFields = (fields: Float32Array, index: number, kart: Kart): void => {
