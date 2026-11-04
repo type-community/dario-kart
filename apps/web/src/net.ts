@@ -1,5 +1,5 @@
 import {
-  type ClientMessage, type DecodedSnapshot, GapStats, type Input, MSG_SNAPSHOT, type NetReport, type ServerMessage,
+  type ClientMessage, type DecodedSnapshot, GapStats, type Input, KICKED, MSG_SNAPSHOT, type NetReport, type ServerMessage,
   decodeSnapshot, encodeInputs,
 } from "@dario-kart/sim";
 
@@ -14,10 +14,11 @@ const RETRY_MS = [300, 1000, 2000, 4000, 8000];
 const PONG_TIMEOUT_MS = 7000;
 
 /**
- * Close codes that mean "don't come back": we left, the lobby is full, or a
- * newer connection took our seat (retrying would just take it back).
+ * Close codes that mean "don't come back": we left, the lobby is full, a
+ * newer connection took our seat (retrying would just take it back), or we
+ * were kicked.
  */
-const FINAL_CODES = new Set([1000, 1013, 4000]);
+const FINAL_CODES = new Set([1000, 1013, 4000, KICKED]);
 
 export class Net {
   private ws: WebSocket | null = null;

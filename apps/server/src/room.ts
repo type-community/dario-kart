@@ -2,7 +2,7 @@ import {
   CHARACTERS, type ClientMessage, GapStats, type Input, KARTS, type LobbyPlayer, Phase,
   type RaceResult, type RaceSlot, SNAPSHOT_ACK_OFFSET, type ServerMessage, THEMES, TICK_RATE,
   type ThemeId, World, botInput, characterIndex, decodeInputs, encodeSnapshot, kartIndex,
-  type NetReport, cleanNetReport, kartById, makeInput, snapshotSize, validColor,
+  KICKED, type NetReport, cleanNetReport, kartById, makeInput, snapshotSize, validColor,
 } from "@dario-kart/sim";
 
 /**
@@ -23,6 +23,15 @@ export interface PlayerInfo {
   kart: string;
   primary: number;
   secondary: number;
+}
+
+/** What survives a hibernation, stored on the socket. */
+export interface Saved {
+  readonly info: PlayerInfo;
+  /** This connection, as other players see it (two tabs can share a player id). */
+  readonly key: string;
+  /** Join order; the earliest connection is the host. */
+  readonly joinedAt: number;
 }
 
 const MAX_RACERS = 100;
@@ -82,6 +91,7 @@ class InputQueue {
 interface Player {
   readonly conn: Conn;
   readonly info: PlayerInfo;
+  readonly key: string;
   readonly joinedAt: number;
   readonly queue: InputQueue;
   slot: number;
@@ -126,17 +136,32 @@ export class RaceRoom {
   private abandonTimer: ReturnType<typeof setTimeout> | null = null;
   private joinCounter = 0;
 
-  constructor(private readonly persist: (conn: Conn, info: PlayerInfo) => void) {}
+  /** `null` clears the socket's saved state, so a restore skips it. */
+  constructor(private readonly persist: (conn: Conn, saved: Saved | null) => void) {}
 
   get racing(): boolean {
     return this.world !== null;
   }
 
-  /** Re-attach sockets that survived a hibernation. The race itself is gone, so everyone lands in the lobby. */
-  restore(conn: Conn, info: PlayerInfo | null, code: string): void {
-    if (!info) return;
+  /**
+   * Re-attach sockets that survived a hibernation. The race itself is gone, so
+   * everyone lands in the lobby. Join order is saved too, so the host stays the host.
+   */
+  restore(conn: Conn, saved: Saved | null, code: string): void {
+    if (!saved) return;
     this.code ||= code;
-    this.players.set(conn, { conn, info, joinedAt: this.joinCounter++, queue: new InputQueue(), slot: -1, lastEmote: 0, lastNudge: 0, errorsLogged: 0, inputGaps: new GapStats(), net: null });
+    this.joinCounter = Math.max(this.joinCounter, saved.joinedAt + 1);
+    const player = this.newPlayer(conn, saved.info, saved.key, saved.joinedAt);
+    this.players.set(conn, player);
+    this.save(player);
+  }
+
+  private newPlayer(conn: Conn, info: PlayerInfo, key: string, joinedAt: number): Player {
+    return { conn, info, key, joinedAt, queue: new InputQueue(), slot: -1, lastEmote: 0, lastNudge: 0, errorsLogged: 0, inputGaps: new GapStats(), net: null };
+  }
+
+  private save(player: Player): void {
+    this.persist(player.conn, { info: player.info, key: player.key, joinedAt: player.joinedAt });
   }
 
   connect(conn: Conn, code: string): void {
@@ -180,7 +205,7 @@ export class RaceRoom {
         const now = Date.now();
         if (now - player.lastNudge > 1000) {
           player.lastNudge = now;
-          this.send(conn, this.lobbyMessage());
+          this.send(conn, this.lobbyMessage(player.key));
         }
         return;
       }
@@ -211,11 +236,9 @@ export class RaceRoom {
         info.kart = validKart(msg.kart);
         info.primary = validColor(msg.primary, kartById(info.kart).color);
         info.secondary = validColor(msg.secondary, kartById(info.kart).accent);
-        if (!existing) {
-          this.players.set(conn, { conn, info, joinedAt: this.joinCounter++, queue: new InputQueue(), slot: -1, lastEmote: 0, lastNudge: 0, errorsLogged: 0, inputGaps: new GapStats(), net: null });
-        }
-        this.persist(conn, info);
+        if (!existing) this.players.set(conn, this.newPlayer(conn, info, crypto.randomUUID().slice(0, 8), this.joinCounter++));
         const player = this.players.get(conn)!;
+        this.save(player);
         if (this.abandonTimer) {
           clearTimeout(this.abandonTimer);
           this.abandonTimer = null;
@@ -235,7 +258,7 @@ export class RaceRoom {
         player.info.kart = validKart(msg.kart);
         player.info.primary = validColor(msg.primary, player.info.primary);
         player.info.secondary = validColor(msg.secondary, player.info.secondary);
-        this.persist(conn, player.info);
+        this.save(player);
         this.broadcastLobby();
         break;
       }
@@ -249,6 +272,25 @@ export class RaceRoom {
       case "start": {
         if (!this.isHost(conn) || this.world || this.resultsTimer) return;
         this.startRace();
+        break;
+      }
+      case "kick": {
+        const player = this.players.get(conn);
+        const target = [...this.players.values()].find((p) => p.key === msg.key);
+        // The host can remove anyone; anyone can close their own other tabs.
+        if (!player || !target || target === player) return;
+        const byHost = this.isHost(conn);
+        if (!byHost && target.info.id !== player.info.id) return;
+        const reason = byHost ? "The host removed you from the lobby." : "Closed from your other tab.";
+        log("kick", { code: this.code, by: player.info.id, player: target.info.id, name: target.info.name, byHost });
+        // The socket may be dead (a laptop that went to sleep), so don't wait for its close.
+        this.persist(target.conn, null);
+        this.disconnect(target.conn, KICKED, reason);
+        try {
+          target.conn.close(KICKED, reason);
+        } catch {
+          // already gone
+        }
         break;
       }
       case "ping":
@@ -341,17 +383,19 @@ export class RaceRoom {
     return [...this.players.values()]
       .sort((a, b) => a.joinedAt - b.joinedAt)
       .map((p) => ({
-        id: p.info.id, name: p.info.name, character: p.info.character, kart: p.info.kart,
+        id: p.info.id, key: p.key, name: p.info.name, character: p.info.character, kart: p.info.kart,
         primary: p.info.primary, secondary: p.info.secondary, host: p === host,
       }));
   }
 
-  private lobbyMessage(): ServerMessage {
-    return { t: "lobby", code: this.code, players: this.lobbyPlayers(), track: this.track, bots: this.bots, racing: this.racing };
+  private lobbyMessage(you = ""): Extract<ServerMessage, { t: "lobby" }> {
+    return { t: "lobby", code: this.code, players: this.lobbyPlayers(), track: this.track, bots: this.bots, racing: this.racing, you };
   }
 
+  /** Each socket is told which entry is its own: a player id can be in the lobby from several tabs. */
   private broadcastLobby(): void {
-    this.broadcast(this.lobbyMessage());
+    const lobby = this.lobbyMessage();
+    for (const p of this.players.values()) this.send(p.conn, { ...lobby, you: p.key });
   }
 
   /**

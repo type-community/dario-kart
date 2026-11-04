@@ -1425,7 +1425,7 @@ button {
 
 .grid-list li {
   display: grid;
-  grid-template-columns: 1.4rem 1.75rem 1fr auto;
+  grid-template-columns: 1.4rem 1.75rem 1fr auto auto;
   gap: 0.5rem;
   align-items: center;
   padding: 0.25rem 0;
@@ -1469,6 +1469,16 @@ button {
   font-size: var(--step--1);
   color: var(--hazard);
   font-weight: 700;
+}
+
+.grid-list .kick {
+  font-size: var(--step--1);
+  color: var(--wafer-dim);
+}
+
+.grid-list .kick:hover,
+.grid-list .kick:focus-visible {
+  color: var(--wafer);
 }
 
 .grid-list .bots {

@@ -1,6 +1,6 @@
 import "./style.css";
 import {
-  CHARACTERS, KARTS, LAPS, type RaceResult, type RaceSlot, type ServerMessage, THEMES, TICK_RATE, type ThemeId, kartById,
+  CHARACTERS, KARTS, KICKED, LAPS, type RaceResult, type RaceSlot, type ServerMessage, THEMES, TICK_RATE, type ThemeId, kartById,
 } from "@dario-kart/sim";
 import { sound } from "./audio.ts";
 import { Controls } from "./controls.ts";
@@ -116,7 +116,7 @@ const go = (next: Screen) => {
     case "lobby": {
       if (!lobby) return;
       const scroll = ui.scrollTop;
-      ui.innerHTML = lobbyView(lobby, profile, lobby.players.find((p) => p.host)?.id === profile.id);
+      ui.innerHTML = lobbyView(lobby, profile);
       ui.scrollTop = scroll;
       const slot = ui.querySelector<HTMLElement>("[data-preview]");
       if (slot) {
@@ -171,7 +171,10 @@ const join = (code: string, pushHistory = true) => {
 
 net.onClose = (reason, code) => {
   hideReconnecting();
-  goHome(code === 4000 ? "You joined this race from another tab or device." : `${reason} Check your connection and try again.`, false);
+  let message = `${reason} Check your connection and try again.`;
+  if (code === 4000) message = "You joined this race from another tab or device.";
+  else if (code === KICKED) message = reason.replace(/ \(code \d+\)$/, "");
+  goHome(message, false);
 };
 
 let reconnectBanner: HTMLElement | null = null;
@@ -225,7 +228,7 @@ const sendNetStats = (final: boolean) => {
 net.onMessage = (msg: ServerMessage) => {
   switch (msg.t) {
     case "lobby":
-      lobby = { code: msg.code, players: msg.players, track: msg.track, bots: msg.bots, racing: msg.racing };
+      lobby = { code: msg.code, players: msg.players, track: msg.track, bots: msg.bots, racing: msg.racing, you: msg.you };
       if (screen.kind === "landing" || screen.kind === "lobby") go({ kind: "lobby" });
       else if (screen.kind === "race" && !practicing && !msg.racing) {
         // The server has no race (it was reset). Don't strand the player on a frozen race.
@@ -305,6 +308,8 @@ ui.addEventListener("click", (e) => {
     practice();
   } else if (action === "start") {
     net.send({ t: "start" });
+  } else if (action === "kick" && target.dataset.key) {
+    net.send({ t: "kick", key: target.dataset.key });
   } else if (action === "copy" && lobby) {
     const link = `${location.origin}${location.pathname}?race=${lobby.code}`;
     navigator.clipboard?.writeText(link).then(() => {
