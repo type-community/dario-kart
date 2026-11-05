@@ -83,18 +83,26 @@ const fillNitro = (kart: Kart, amount: number): void => {
 };
 
 /** Banked, assisted cornering: this share of the road's turn rotates the kart with it. */
-export const CORNER_ASSIST = 0.16;
+export const CORNER_ASSIST = 0.12;
 /**
  * A drift mostly follows the road by itself: the nose points in, the kart
  * slides a little wide, and steering tightens or widens the line. Without
  * this a drift turns far faster than most bends and ends in the wall.
  */
-export const DRIFT_ASSIST = 0.65;
+export const DRIFT_ASSIST = 0.55;
 /** Drift yaw, as shares of the kart's steer rate: a constant pull inward plus steering. */
 export const DRIFT_PULL = 0.12;
 export const DRIFT_STEER = 0.25;
+/**
+ * No stack of boosts, GPUs, slipstream and nitro takes a kart past this share
+ * of its listed top speed. Without it, boosts compound and a race keeps
+ * getting faster: by the last lap karts sat at 1.2x top speed and peaked at 1.77x.
+ */
+const SPEED_CEILING = 1.5;
+/** Speed over the current top speed fades at this rate per second once a boost ends. */
+const OVERSPEED_FADE = 1.6;
 /** Hands off the steering, the kart's angle to the road decays at this rate per second. */
-const SELF_ALIGN = 3;
+const SELF_ALIGN = 2.2;
 /** A wall hit that costs more than this share of your speed breaks a drift chain. */
 const CHAIN_BREAK_LOSS = 0.08;
 export const STAT = {
@@ -699,6 +707,7 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
     // Nitro stacks on top of any other boost, so burning it always does something.
     if (kart.nitroLit && kart.boostKind !== BoostKind.Nitro) maxSpeed *= NITRO_STACK;
   }
+  maxSpeed = Math.min(maxSpeed, kart.maxSpeed * SPEED_CEILING);
   if (kart.slowZone) maxSpeed *= kart.perk === "constitutional" ? 0.85 : 0.55 + kart.traction * 0.2;
 
   const throttle = control && (throttleHeld || kart.boostT > 0);
@@ -708,7 +717,7 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
     kart.speed = Math.min(maxSpeed, kart.speed + accel * (1 - 0.7 * ratio) * DT);
   } else if (kart.speed > maxSpeed) {
     // Momentum: after a boost the extra speed fades out gently instead of cutting off.
-    kart.speed -= (kart.speed - maxSpeed) * Math.min(1, (kart.slowZone ? 3 : 0.55) * DT);
+    kart.speed -= (kart.speed - maxSpeed) * Math.min(1, (kart.slowZone ? 3 : OVERSPEED_FADE) * DT);
   } else if (brake) {
     kart.speed = kart.speed > 0 ? kart.speed - 48 * DT : Math.max(-14, kart.speed - 20 * DT);
   } else {
@@ -717,6 +726,7 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
     kart.speed = Math.abs(kart.speed) <= drop ? 0 : kart.speed - Math.sign(kart.speed) * drop;
   }
   if (!control) kart.speed -= kart.speed * 0.3 * DT;
+  kart.speed = Math.min(kart.speed, kart.maxSpeed * SPEED_CEILING);
 
   const driftHeld = (bits & InputBit.Drift) !== 0;
   if (control && grounded && driftHeld && !kart.drifting && Math.abs(steer) > 0.2 && kart.speed > 12) {
