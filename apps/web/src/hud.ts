@@ -12,14 +12,12 @@ const SLOW_CAUSES = [
   { flag: SlowFlag.Wall, icon: "🧱", title: "Hit the wall", body: "Glance off walls instead of hitting them head on" },
 ] as const;
 
+/** Only boosts you earned get a callout; pads and your own nitro speak for themselves. */
 const BOOST_NAMES: Record<number, string> = {
-  [BoostKind.Pad]: "Boost pad",
   [BoostKind.Drift]: "Mini boost",
   [BoostKind.SuperDrift]: "Super boost",
-  [BoostKind.Landing]: "Landing boost",
   [BoostKind.UltraDrift]: "ULTRA boost",
   [BoostKind.Trick]: "Trick boost",
-  [BoostKind.Nitro]: "Compute Boost",
 };
 const DRIFT_BOOSTS: ReadonlySet<number> = new Set([BoostKind.Drift, BoostKind.SuperDrift, BoostKind.UltraDrift]);
 
