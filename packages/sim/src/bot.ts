@@ -2,7 +2,7 @@ import { ItemKind } from "./content.ts";
 import { type Input, InputBit } from "./input.ts";
 import { hash01 } from "./rng.ts";
 import { curvatureAt } from "./track.ts";
-import { DT, type Kart, Phase, type World } from "./world.ts";
+import { DRIFT_ASSIST, DRIFT_PULL, DRIFT_STEER, DT, type Kart, Phase, type World } from "./world.ts";
 
 /**
  * Track-following AI. Used for bot racers, for humans after they finish, and
@@ -48,6 +48,11 @@ export const botInput = (world: World, kart: Kart, out: Input, skillOverride?: n
   const wantHeading = Math.atan2(kart.botLane - kart.d, lookahead);
   const feedForward = (signedK * absSpeed * (1 - kart.cornerAssist)) / (kart.steerRate * speedFactor);
   let steer = (wantHeading - kart.heading) * 2.6 + feedForward;
+  if (kart.drifting) {
+    // Drifting turns differently: steer the slide's travel direction, not the nose.
+    const driftFF = (signedK * absSpeed * (1 - DRIFT_ASSIST)) / (kart.steerRate * speedFactor * DRIFT_STEER) - (kart.driftDir * DRIFT_PULL) / DRIFT_STEER;
+    steer = (wantHeading - (kart.heading - kart.slip)) * 2.6 + driftFF;
+  }
   const backwards = kart.heading > 1.4 || kart.heading < -1.4;
   if (backwards) {
     // Turn the nose away from the nearest wall, never into it.
@@ -87,7 +92,7 @@ export const botInput = (world: World, kart: Kart, out: Input, skillOverride?: n
       if (kart.item === ItemKind.Missile && kart.rank === 0 && hash01(world.seed, world.tick, 5) < 0.5) {
         bits |= InputBit.Back;
       }
-      kart.botItemDelay = 0.6 + hash01(world.seed, world.tick, kart.slot + 11) * 2.5;
+      kart.botItemDelay = 1.5 + hash01(world.seed, world.tick, kart.slot + 11) * 3.5;
     }
   }
 

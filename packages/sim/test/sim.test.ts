@@ -162,6 +162,27 @@ describe("feel", () => {
     expect(kart.nitroLit).toBe(0);
   });
 
+  test("nitro stacks on top of another boost", () => {
+    const top = (nitro: boolean) => {
+      const world = solo();
+      skipCountdown(world);
+      const kart = world.karts[1];
+      const inputs = world.karts.map(() => makeInput());
+      inputs[1].bits = InputBit.Throttle | (nitro ? InputBit.Nitro : 0);
+      kart.nitro = 1;
+      kart.speed = 40;
+      for (let t = 0; t < 90; t++) {
+        kart.boostT = 1;
+        kart.boostKind = BoostKind.Pad;
+        kart.d = 0;
+        kart.heading = 0;
+        world.step(inputs);
+      }
+      return kart.speed;
+    };
+    expect(top(true)).toBeGreaterThan(top(false) * 1.03);
+  });
+
   test("item boxes give a missile you can fire straight away", () => {
     const world = solo();
     skipCountdown(world);

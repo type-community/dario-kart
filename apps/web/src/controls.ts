@@ -75,7 +75,8 @@ export class Controls {
     if (analog !== null) {
       this.steer = analog;
     } else {
-      const rate = target === 0 || Math.sign(target) !== Math.sign(this.steer) ? 9 : 5;
+      // Keys build up to full lock over a quarter second, so a quick tap is a small correction.
+      const rate = target === 0 || Math.sign(target) !== Math.sign(this.steer) ? 9 : 4;
       const delta = target - this.steer;
       this.steer += Math.sign(delta) * Math.min(Math.abs(delta), rate * dt);
     }

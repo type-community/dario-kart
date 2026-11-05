@@ -94,6 +94,8 @@ export class Hud {
   private lastBoostKind = 0;
   private lastItem = 0;
   private lastPasses = 0;
+  /** There's only one item, so its big card only needs introducing once per race. */
+  private shownCard = false;
   private calloutTimer: ReturnType<typeof setTimeout> | null = null;
   private cardTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -162,6 +164,7 @@ export class Hud {
     this.lastBoostKind = 0;
     this.lastItem = 0;
     this.lastPasses = 0;
+    this.shownCard = false;
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (let k = 0; k < track.count; k++) {
       minX = Math.min(minX, track.px[k]); maxX = Math.max(maxX, track.px[k]);
@@ -290,6 +293,9 @@ export class Hud {
       this.el.slot1.classList.remove("landed");
       void this.el.slot1.offsetWidth;
       this.el.slot1.classList.add("landed");
+    }
+    if (s.item !== ItemKind.None && !this.shownCard && !s.spectating) {
+      this.shownCard = true;
       this.el.getcard.hidden = false;
       this.el.getcard.className = "hud-getcard landed";
       this.set("getGlyph", GLYPHS[s.item] ?? "");

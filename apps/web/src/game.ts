@@ -543,17 +543,7 @@ export class RaceView {
         trackPoint(track, r.dist - c * 2.3, r.d - sn * 2.3, 0.5 + r.z, this.tmpA);
         const nitro = kart.nitroLit > 0;
         const color = kart.boostKind === BoostKind.UltraDrift ? 0xb18cff : nitro ? 0x7af0ff : 0x3de0ff;
-        for (let n = nitro ? 3 : 1; n > 0; n--) {
-          this.sparks.emit(this.tmpA.x, this.tmpA.y, this.tmpA.z, (Math.random() - 0.5) * 2, Math.random() * 2, (Math.random() - 0.5) * 2, color, 0.3);
-        }
-      }
-      // Wind: streaks hang in the air ahead of you and whip past. Slipstream and nitro only.
-      if (i === this.setup.you && (kart.draft > 0.3 || kart.nitroLit) && kart.speed > 20) {
-        const ahead = 14 + Math.random() * 10;
-        const side = (Math.random() < 0.5 ? -1 : 1) * (1.4 + Math.random() * 2.2);
-        trackPoint(track, r.dist + c * ahead - sn * side, r.d + sn * ahead + c * side, 0.4 + Math.random() * 2.2 + r.z, this.tmpA);
-        const color = kart.nitroLit ? 0x7af0ff : 0xeef3ff;
-        this.sparks.emit(this.tmpA.x, this.tmpA.y, this.tmpA.z, 0, 0, 0, color, 0.45, 0);
+        this.sparks.emit(this.tmpA.x, this.tmpA.y, this.tmpA.z, (Math.random() - 0.5) * 2, Math.random() * 2, (Math.random() - 0.5) * 2, color, 0.3);
       }
       if (kart.stunT > this.prevStun[i] + 0.3) {
         this.tmpA.copy(root.position).y += 1;
