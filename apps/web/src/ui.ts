@@ -30,6 +30,10 @@ export interface LobbyState {
 const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
+/** Given to anyone who arrives without a name, so a lobby link never stops at a form. */
+export const placeholderName = () => `Racer ${100 + Math.floor(Math.random() * 900)}`;
+export const isPlaceholderName = (name: string) => /^Racer( \d+)?$/.test(name);
+
 const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
 
 const meter = (value: number) =>
@@ -59,6 +63,26 @@ export const landingView = (profile: Profile, code: string, error: string) => `
     </form>
   </section>
 `;
+
+export const joiningView = (code: string) => `
+  <section class="joining" role="status">
+    <p>Joining lobby <strong>${esc(code)}</strong>…</p>
+    <button class="quiet" type="button" data-action="leave">Cancel</button>
+  </section>
+`;
+
+const nameForm = (name: string, saved: boolean) => {
+  const unnamed = isPlaceholderName(name);
+  return `
+  <form class="name-form${unnamed ? " unnamed" : ""}" data-form="name" novalidate>
+    <label for="lobby-name">Your name</label>
+    <div class="name-row">
+      <input id="lobby-name" name="name" maxlength="16" autocomplete="nickname" spellcheck="false" value="${esc(name)}" aria-describedby="name-hint" />
+      <button class="go" type="submit">${saved ? "Saved" : "Save"}</button>
+    </div>
+    <p class="name-hint" id="name-hint">${unnamed ? `Everyone sees you as ${esc(name)}. Type your name so friends know it's you.` : "This is what everyone sees on the grid and the leaderboard."}</p>
+  </form>`;
+};
 
 const driverPicker = (profile: Profile) => `
   <div class="drivers" role="group" aria-label="Driver">
@@ -116,7 +140,7 @@ const showroom = (profile: Profile) => {
     </div>`;
 };
 
-export const lobbyView = (lobby: LobbyState, profile: Profile) => {
+export const lobbyView = (lobby: LobbyState, profile: Profile, nameSaved = false) => {
   const host = lobby.players.find((p) => p.host);
   const hostIsMe = host !== undefined && host.key === lobby.you;
   const total = lobby.players.length + lobby.bots;
@@ -141,7 +165,7 @@ export const lobbyView = (lobby: LobbyState, profile: Profile) => {
       <div class="lobby-cta">${cta}</div>
     </header>
     <div class="lobby-body">
-      <section class="lobby-col showroom" aria-label="Your kart">${showroom(profile)}</section>
+      <section class="lobby-col showroom" aria-label="You">${nameForm(lobby.players.find((p) => p.key === lobby.you)?.name ?? profile.name, nameSaved)}${showroom(profile)}</section>
       <section class="lobby-col picks" aria-label="Driver and kart">
         <h2>Driver</h2>
         ${driverPicker(profile)}
@@ -158,9 +182,11 @@ export const lobbyView = (lobby: LobbyState, profile: Profile) => {
               <span class="dot">${avatarSvg(c.id, 28, false)}</span>
               <span class="who">${esc(p.name)}<small><i style="background:${hex(p.primary)}"></i><i style="background:${hex(p.secondary)}"></i>${c.name} in ${kartById(p.kart).name}</small></span>
               <span class="tag">${p.key === lobby.you ? "You" : p.id === profile.id ? "Your other tab" : p.host ? "Host" : ""}</span>
-              ${p.key !== lobby.you && (hostIsMe || p.id === profile.id)
-                ? `<button class="quiet kick" type="button" data-action="kick" data-key="${esc(p.key)}" aria-label="Remove ${esc(p.name)} from the lobby">Kick</button>`
-                : "<span></span>"}
+              ${p.key === lobby.you
+                ? `<button class="quiet kick" type="button" data-action="rename">Rename</button>`
+                : hostIsMe || p.id === profile.id
+                  ? `<button class="quiet kick" type="button" data-action="kick" data-key="${esc(p.key)}" aria-label="Remove ${esc(p.name)} from the lobby">Kick</button>`
+                  : "<span></span>"}
             </li>`;
           }).join("")}
           ${lobby.bots > 0 ? `<li class="bots"><span class="pos">+</span><span>${lobby.bots} bots fill out the grid</span></li>` : ""}

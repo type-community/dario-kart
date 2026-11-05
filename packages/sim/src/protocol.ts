@@ -48,7 +48,8 @@ export interface RaceResult {
 
 export type ClientMessage =
   | { readonly t: "hello"; readonly v: number; readonly id: string; readonly name: string; readonly character: string; readonly kart: string; readonly primary: number; readonly secondary: number }
-  | { readonly t: "pick"; readonly character: string; readonly kart: string; readonly primary: number; readonly secondary: number }
+  /** `name` is optional so a client can talk to a server from before renames. */
+  | { readonly t: "pick"; readonly name?: string; readonly character: string; readonly kart: string; readonly primary: number; readonly secondary: number }
   | { readonly t: "settings"; readonly track: ThemeId; readonly bots: number }
   | { readonly t: "start" }
   /** Remove a lobby entry by `key`. The host can remove anyone, anyone can remove their own other tabs. */
@@ -71,6 +72,10 @@ export type ServerMessage =
 
 /** Close code for a player removed from the lobby; the client doesn't reconnect. */
 export const KICKED = 4002;
+
+/** What the server keeps of a player's name; the client cleans names the same way. */
+export const cleanName = (name: unknown, fallback = "Racer"): string =>
+  (typeof name === "string" ? name : "").replace(/[^\p{L}\p{N} _.-]/gu, "").trim().slice(0, 16) || fallback;
 
 export const validColor = (value: unknown, fallback: number): number =>
   typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0xffffff ? value : fallback;

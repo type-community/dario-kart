@@ -192,6 +192,27 @@ const amHost = (c: ReturnType<typeof client>) => {
 };
 
 describe("lobby", () => {
+  test("a player can rename themselves from the lobby", () => {
+    const room = new RaceRoom(() => {});
+    const a = client();
+    const b = client();
+    room.connect(a.conn, "NAME1");
+    room.connect(b.conn, "NAME1");
+    hello(room, a.conn, "Racer 417");
+    hello(room, b.conn, "Bea");
+    const names = () => {
+      const lobby = b.messages.findLast((m) => m.t === "lobby");
+      return lobby && lobby.t === "lobby" ? lobby.players.map((p) => p.name) : [];
+    };
+    const pick = (name?: string) =>
+      room.message(a.conn, JSON.stringify({ t: "pick", name, character: "lisa", kart: "astra", primary: 0, secondary: 0 }));
+    pick("Ada <3");
+    expect(names()).toEqual(["Ada 3", "Bea"]);
+    // A pick without a name (an older client) keeps the name.
+    pick();
+    expect(names()).toEqual(["Ada 3", "Bea"]);
+  });
+
   test("only the first of two tabs with one id is shown as host", () => {
     const room = new RaceRoom(() => {});
     const first = client();
