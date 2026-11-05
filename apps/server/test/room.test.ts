@@ -77,14 +77,15 @@ describe("race lifecycle", () => {
       len = encodeInputs([{ seq: ++seq, steer: 0, bits: 1 }, { seq: ++seq, steer: 0, bits: 1 }], buf, race.seed);
       room.message(a.conn, buf.buffer.slice(0, len));
     }, 33);
-    await Bun.sleep(4500);
+    // 5 s countdown, then 1.5 s of driving.
+    await Bun.sleep(6500);
     clearInterval(timer);
     const snap = a.snapshot!;
     expect(snap.header.ack).toBeGreaterThan(100);
     expect(snap.header.ack).toBeLessThan(5000);
     expect(kartField(snap.karts, 0, "speed")).toBeGreaterThan(10);
     room.disconnect(a.conn);
-  });
+  }, 10_000);
 
   test("a player who drops mid-race gets their kart back on reconnect", () => {
     const room = new RaceRoom(() => {});

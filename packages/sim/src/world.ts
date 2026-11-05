@@ -6,7 +6,7 @@ import { type CoinDef, FeatureKind, type ItemBoxDef, type Track, curvatureAt, ge
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
 export const LAPS = 2;
-export const COUNTDOWN_TICKS = 3 * TICK_RATE;
+export const COUNTDOWN_TICKS = 5 * TICK_RATE;
 export const KART_RADIUS = 1.0;
 export const TOKEN_MAXING_SECONDS = 8;
 export const TOKEN_MAXING_SCALE = 1.85;

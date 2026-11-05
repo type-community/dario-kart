@@ -792,7 +792,7 @@ export class RaceView {
 
     if (world.phase === Phase.Countdown) {
       const sec = Math.ceil(world.phaseTicks / TICK_RATE);
-      if (sec !== w.sec && sec <= 3) sound.countdown(sec);
+      if (sec !== w.sec && sec <= 5) sound.countdown(sec);
       w.sec = sec;
     } else if (w.sec > 0 && w.sec < 99) {
       sound.countdown(0);
