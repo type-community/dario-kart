@@ -2,6 +2,7 @@ import { FeatureKind, type Pose, type Track, type TrackTheme, makePose, poseAt }
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { type Part, buildDriver, kartGeometry, partMaterial } from "./kart-model.ts";
+import { THEME_LOOKS, type PlacedBuilding, themeDecor } from "./landmarks.ts";
 
 const pose = makePose();
 const basisX = new THREE.Vector3();
@@ -37,7 +38,7 @@ export const placeOnTrack = (
   obj.quaternion.setFromRotationMatrix(basis);
 };
 
-const canvasTexture = (w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void): THREE.CanvasTexture => {
+export const canvasTexture = (w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void): THREE.CanvasTexture => {
   const canvas = document.createElement("canvas");
   canvas.width = w;
   canvas.height = h;
@@ -50,7 +51,7 @@ const canvasTexture = (w: number, h: number, draw: (ctx: CanvasRenderingContext2
   return tex;
 };
 
-const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
+export const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
 
 const roadTexture = (theme: TrackTheme) =>
   canvasTexture(256, 256, (ctx) => {
@@ -211,6 +212,27 @@ const gpuTexture = () =>
     }
   });
 
+/** Machine casing for the Fab's tools: white panels, seams, a colored status band. */
+const panelTexture = () =>
+  canvasTexture(64, 128, (ctx) => {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, 64, 128);
+    ctx.strokeStyle = "#c3cad4";
+    ctx.lineWidth = 2;
+    for (let y = 0; y <= 128; y += 32) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(64, y);
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.moveTo(32, 0);
+    ctx.lineTo(32, 128);
+    ctx.stroke();
+    ctx.fillStyle = "#2a3550";
+    ctx.fillRect(0, 100, 64, 10);
+  });
+
 const floorTexture = (theme: TrackTheme) =>
   canvasTexture(128, 128, (ctx) => {
     ctx.fillStyle = hex(theme.ground);
@@ -278,7 +300,7 @@ export interface TrackScene {
   dispose(): void;
 }
 
-const neon = (theme: TrackTheme) => theme.id === "fab" || theme.id === "shenzhen";
+const neon = (theme: TrackTheme) => THEME_LOOKS[theme.id].glow;
 
 export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Scene): TrackScene => {
   const group = new THREE.Group();
@@ -297,13 +319,14 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
     list.push(geometry);
   };
 
+  const look = THEME_LOOKS[theme.id];
   scene.background = new THREE.Color(theme.sky);
-  scene.fog = new THREE.Fog(theme.fog, 160, neon(theme) ? 750 : 1100);
+  scene.fog = new THREE.Fog(theme.fog, look.fog[0], look.fog[1]);
 
-  const hemi = new THREE.HemisphereLight(neon(theme) ? 0x8fa8ff : theme.sky, theme.ground, neon(theme) ? 1.1 : 1.2);
-  const ambient = new THREE.AmbientLight(0xffffff, neon(theme) ? 0.6 : 0.35);
-  const sun = new THREE.DirectionalLight(0xffffff, neon(theme) ? 1.2 : 2.2);
-  sun.position.set(300, 500, 200);
+  const hemi = new THREE.HemisphereLight(look.hemiSky, theme.ground, look.hemi);
+  const ambient = new THREE.AmbientLight(0xffffff, look.ambient);
+  const sun = new THREE.DirectionalLight(look.sunColor, look.sun);
+  sun.position.set(...look.sunAt);
   group.add(hemi, ambient, sun);
 
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
@@ -503,14 +526,17 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
   const coinBase = track.coins.map((c) => trackPoint(track, c.s, c.d, c.h, new THREE.Vector3()));
   group.add(coins);
 
-  const buildingCount = Math.min(700, Math.floor(L / 6));
+  const decor = themeDecor(track, theme);
+  const lit = look.windows === "lit";
+  const buildingCount = Math.min(900, Math.floor(L * look.density));
   const buildingMat = keep(new THREE.MeshStandardMaterial({
-    map: keep(windowTexture(neon(theme) || theme.id === "nyc")),
-    emissiveMap: neon(theme) || theme.id === "nyc" ? keep(windowTexture(true)) : null,
-    emissive: neon(theme) ? theme.glow : theme.id === "nyc" ? 0xffd9a0 : 0x000000,
-    emissiveIntensity: neon(theme) ? 0.9 : 0.35,
+    map: keep(look.windows === "panels" ? panelTexture() : windowTexture(lit)),
+    emissiveMap: lit ? keep(windowTexture(true)) : null,
+    emissive: lit ? (look.glow ? theme.glow : 0xffd9a0) : 0x000000,
+    emissiveIntensity: look.glow ? 0.9 : 0.55,
     roughness: 0.8,
   }));
+  const placedBuildings: PlacedBuilding[] = [];
   const buildings = new THREE.InstancedMesh(keep(new THREE.BoxGeometry(1, 1, 1)), buildingMat, buildingCount);
   const coarse: number[] = [];
   for (let k = 0; k < track.count; k += 4) coarse.push(track.px[k], track.pz[k]);
@@ -531,7 +557,7 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
     const footprint = 8 + rand() * 22;
     const k = Math.round(s / track.step) % track.count;
     const yaw = Math.atan2(track.tz[k], track.tx[k]);
-    const offset = hw + 10 + footprint / 2 + rand() * rand() * 170;
+    const offset = hw + 10 + footprint / 2 + rand() * rand() * look.spread;
     pos.set(track.px[k] - Math.sin(yaw) * side * offset, 0, track.pz[k] + Math.cos(yaw) * side * offset);
     const clearance = hw + footprint * 0.75 + 8;
     let ok = true;
@@ -543,12 +569,13 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
         break;
       }
     }
-    if (!ok) continue;
+    if (!ok || decor.reserved.some((r) => Math.hypot(r.x - pos.x, r.z - pos.z) < r.r + footprint * 0.75)) continue;
     const [hMin, hMax] = theme.buildingHeight;
     const height = hMin + (hMax - hMin) * Math.pow(rand(), 1.6);
     pos.y = height / 2;
     q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, Math.PI / 2 - yaw);
     scale.set(footprint, height, footprint * (0.7 + rand() * 0.6));
+    placedBuildings.push({ x: pos.x, z: pos.z, w: scale.x, d: scale.z, h: height, rot: Math.PI / 2 - yaw });
     m.compose(pos, q, scale);
     buildings.setMatrixAt(placed, m);
     buildings.setColorAt(placed, color.setHex(theme.buildings[Math.floor(rand() * theme.buildings.length)]));
@@ -556,6 +583,7 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
   }
   buildings.count = placed;
   group.add(buildings);
+  decor.build(placedBuildings, { group, add: addStatic, keep });
 
   for (const [material, list] of batches) {
     const merged = keep(mergeGeometries(list, false));

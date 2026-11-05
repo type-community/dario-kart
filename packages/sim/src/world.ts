@@ -748,7 +748,7 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
         // Chain drifts back to back and every boost in the chain gets longer.
         kart.driftChain = Math.min(MAX_CHAIN, kart.driftChain + 1);
         kart.chainT = CHAIN_WINDOW;
-        const scale = (kart.perk === "storyteller" ? 1.4 : 1) * (1 + CHAIN_BOOST * (kart.driftChain - 1));
+        const scale = (kart.perk === "storyteller" ? 1.5 : 1) * (1 + CHAIN_BOOST * (kart.driftChain - 1));
         if (tier === 3) giveBoost(kart, 1.8 * scale, BoostKind.UltraDrift);
         else if (tier === 2) giveBoost(kart, 1.25 * scale, BoostKind.SuperDrift);
         else giveBoost(kart, 0.7 * scale, BoostKind.Drift);
