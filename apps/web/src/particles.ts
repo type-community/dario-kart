@@ -62,6 +62,15 @@ export class Particles {
       alphaTest: additive ? 0 : 0.5,
       blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
     });
+    // Size attenuation makes a particle right in front of the camera fill the
+    // screen (your own exhaust, a pickup you drive through): cap it.
+    const maxPixels = (36 * Math.min(2, window.devicePixelRatio || 1)).toFixed(1);
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader.replace(
+        "#include <fog_vertex>",
+        `#include <fog_vertex>\n\tgl_PointSize = min(gl_PointSize, ${maxPixels});`,
+      );
+    };
     this.points = new THREE.Points(geo, mat);
     this.points.frustumCulled = false;
   }

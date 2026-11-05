@@ -19,6 +19,9 @@ export const DRIFT_TIER3 = 2.3;
 export const GPU_BONUS = 0.01;
 export const MAX_GPUS = 10;
 const COIN_RESPAWN_TICKS = 10 * TICK_RATE;
+/** How close you need to pass to a GPU or an item box to grab it, in meters. Generous on purpose. */
+const GPU_REACH = 2.6;
+const BOX_REACH = 2.8;
 /** Rocket start window: throttle pressed this many ticks before GO. */
 export const START_PERFECT_TICKS = 24;
 export const START_GOOD_TICKS = 54;
@@ -628,8 +631,8 @@ const applyFeatures = (world: World, kart: Kart): void => {
   for (let i = 0; i < coins.length; i++) {
     const coin = coins[i];
     const ds = s - coin.s;
-    if (ds > 1.8 || ds < -1.8) continue;
-    if (Math.abs(kart.d - coin.d) > 1.8 || Math.abs(kart.z + 0.6 - coin.h) > 1.9) continue;
+    if (ds > GPU_REACH || ds < -GPU_REACH) continue;
+    if (Math.abs(kart.d - coin.d) > GPU_REACH || Math.abs(kart.z + 0.6 - coin.h) > 2.6) continue;
     if (world.coinReadyTick[i] > world.tick) continue;
     world.coinReadyTick[i] = world.tick + COIN_RESPAWN_TICKS;
     if (kart.gpus < MAX_GPUS) kart.gpus++;
@@ -639,8 +642,8 @@ const applyFeatures = (world: World, kart: Kart): void => {
   for (let i = 0; i < boxes.length; i++) {
     const box = boxes[i];
     const ds = s - box.s;
-    if (ds > 2 || ds < -2) continue;
-    if (Math.abs(kart.d - box.d) > 2.2 || kart.z > 3) continue;
+    if (ds > 2.5 || ds < -2.5) continue;
+    if (Math.abs(kart.d - box.d) > BOX_REACH || kart.z > 3.5) continue;
     if (world.boxReadyTick[i] > world.tick) continue;
     world.boxReadyTick[i] = world.tick + BOX_RESPAWN_TICKS;
     giveItem(world, kart);

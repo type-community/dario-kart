@@ -1,13 +1,9 @@
 import {
-  BoostKind, DRIFT_TIER1, DRIFT_TIER2, DRIFT_TIER3, MAX_GPUS, NITRO_MIN, SlowFlag, ITEM_NAMES, ItemKind, type Track,
+  BoostKind, DRIFT_TIER1, DRIFT_TIER2, DRIFT_TIER3, MAX_GPUS, NITRO_MIN, SlowFlag, ItemKind, type Track,
 } from "@dario-kart/sim";
 
 const GLYPHS: Record<number, string> = {
   [ItemKind.Missile]: "🚀",
-};
-
-const ITEM_HINT: Record<number, string> = {
-  [ItemKind.Missile]: "E fires ahead, Q fires behind",
 };
 
 const SLOW_CAUSES = [
@@ -34,10 +30,7 @@ export interface HudState {
   laps: number;
   raceSeconds: number;
   speed: number;
-  maxSpeed: number;
   boosting: boolean;
-  hp: number;
-  hpMax: number;
   item: number;
   itemCount: number;
   item2: number;
@@ -90,14 +83,10 @@ export class Hud {
   private track: Track | null = null;
   private last: Record<string, string> = {};
   private lastCountdown = -1;
-  private tachBars: HTMLElement[] = [];
   private lastBoostKind = 0;
   private lastItem = 0;
   private lastPasses = 0;
-  /** There's only one item, so its big card only needs introducing once per race. */
-  private shownCard = false;
   private calloutTimer: ReturnType<typeof setTimeout> | null = null;
-  private cardTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -106,7 +95,7 @@ export class Hud {
       <div class="hud-items" data-k="items">
         <div class="item-slot" data-k="slot1"><span class="glyph" data-k="glyph1"></span><span class="count" data-k="count1"></span></div>
         <div class="item-slot second" data-k="slot2" hidden><span class="glyph" data-k="glyph2"></span><span class="count" data-k="count2"></span></div>
-        <div class="item-name" data-k="itemName"></div>
+        <kbd class="item-key">E</kbd>
       </div>
       <canvas class="hud-map" width="380" height="380"></canvas>
       <div class="hud-feed" data-k="feed" aria-live="polite"></div>
@@ -118,38 +107,25 @@ export class Hud {
       </div>
       <div class="hud-vignette" data-k="vignette"></div>
       <div class="hud-slow" data-k="slow" hidden><b data-k="slowIcon"></b><div><strong data-k="slowTitle"></strong><span data-k="slowBody"></span></div></div>
-      <div class="hud-getcard" data-k="getcard" hidden><div class="glyph" data-k="getGlyph"></div><strong data-k="getName"></strong><span data-k="getHint"></span></div>
       <div class="hud-center" data-k="center"></div>
       <div class="hud-banner" data-k="banner" hidden><strong data-k="bannerTitle"></strong><span data-k="bannerSub"></span></div>
       <div class="hud-placepop" data-k="placepop" hidden></div>
       <div class="hud-wrongway" data-k="wrongway" hidden>Wrong way</div>
-      <div class="hud-draft" data-k="draft" hidden><span>Slipstream · filling Compute</span><i data-k="draftFill"></i></div>
       <div class="hud-emotes" data-k="emotes"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> trash talk <kbd>M</kbd> sound</div>
       <div class="hud-tips" data-k="tips" hidden>
-        <p>Press <kbd>W</kbd> right as it says 2 → 1 for a rocket start</p>
-        <p>Hold <kbd>Space</kbd> while turning to drift. Sparks go blue, then pink. Let go to boost. Chain drifts for bigger boosts</p>
-        <p>Drift, slipstream and pass close to fill your Compute meter. Hold <kbd>Shift</kbd> to burn it</p>
-        <p>Tap <kbd>Space</kbd> in the air to trick. Land it for a boost</p>
-        <p>Grab green GPUs: each one adds top speed. Hits make you drop them</p>
-        <p><kbd>Esc</kbd> to leave</p>
+        <p>Press <kbd>W</kbd> as it hits 2 for a rocket start</p>
+        <p>Hold <kbd>Space</kbd> in turns to drift, let go to boost</p>
+        <p><kbd>Shift</kbd> burns your Compute meter</p>
       </div>
       <div class="hud-pos"><span class="place" data-k="place"></span><span class="of" data-k="of"></span></div>
       <div class="hud-speed">
-        <div class="gpus" data-k="gpus"></div>
-        <div><span class="num" data-k="speed"></span> <span class="unit">km/h</span></div>
-        <div class="tach" data-k="tach"></div>
-        <div class="nitro" data-k="nitro"><span>Compute · hold Shift</span><div class="bar"><i data-k="nitroFill"></i></div></div>
-        <div class="hp"><i data-k="hp"></i></div>
+        <div class="speed-row"><span class="gpus" data-k="gpus" title="GPUs: each adds top speed"></span><span class="num" data-k="speed"></span><span class="unit">km/h</span></div>
+        <div class="nitro" data-k="nitro"><div class="bar"><i data-k="nitroFill"></i></div><span>Compute <kbd>Shift</kbd></span></div>
       </div>
       <div class="hud-spectate" data-k="spectate" hidden>Spectating. You'll join the next race.</div>
     `;
     for (const node of root.querySelectorAll<HTMLElement>("[data-k]")) this.el[node.dataset.k!] = node;
     this.map = root.querySelector("canvas")!;
-    for (let i = 0; i < 16; i++) {
-      const b = document.createElement("b");
-      this.el.tach.append(b);
-      this.tachBars.push(b);
-    }
   }
 
   show(visible: boolean): void {
@@ -164,7 +140,6 @@ export class Hud {
     this.lastBoostKind = 0;
     this.lastItem = 0;
     this.lastPasses = 0;
-    this.shownCard = false;
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (let k = 0; k < track.count; k++) {
       minX = Math.min(minX, track.px[k]); maxX = Math.max(maxX, track.px[k]);
@@ -272,44 +247,22 @@ export class Hud {
     this.set("lap", s.finishedPlace > 0 ? "Finished" : `Lap ${s.lap} of ${s.laps}`);
     this.set("time", formatTime(Math.max(0, s.raceSeconds)));
     this.set("speed", String(Math.round(Math.abs(s.speed) * 3.6)));
-    const lit = Math.round((Math.abs(s.speed) / (s.maxSpeed * 1.45)) * 16);
-    const tachKey = `${lit}${s.boosting}`;
-    if (this.last.tach !== tachKey) {
-      this.last.tach = tachKey;
-      this.tachBars.forEach((b, i) => {
-        b.className = i < lit ? (i >= 11 || s.boosting ? "on hot" : "on") : "";
-      });
-    }
-    this.el.hp.style.width = `${Math.max(0, Math.min(1, s.hp / s.hpMax)) * 100}%`;
+    this.el.speed.classList.toggle("boosting", s.boosting);
 
     this.set("glyph1", GLYPHS[s.item] ?? "");
     this.set("count1", s.itemCount > 1 ? `×${s.itemCount}` : "");
-    const name = s.item === ItemKind.None ? "" : ITEM_NAMES[s.item];
-    if (this.last.itemName !== name) {
-      this.last.itemName = name;
-      this.el.itemName.innerHTML = name ? `${name}<small>${ITEM_HINT[s.item] ?? ""}</small>` : "";
-    }
     if (s.item !== ItemKind.None && this.lastItem === ItemKind.None && !s.spectating) {
       this.el.slot1.classList.remove("landed");
       void this.el.slot1.offsetWidth;
       this.el.slot1.classList.add("landed");
-    }
-    if (s.item !== ItemKind.None && !this.shownCard && !s.spectating) {
-      this.shownCard = true;
-      this.el.getcard.hidden = false;
-      this.el.getcard.className = "hud-getcard landed";
-      this.set("getGlyph", GLYPHS[s.item] ?? "");
-      this.set("getName", ITEM_NAMES[s.item]);
-      this.set("getHint", ITEM_HINT[s.item] ?? "");
-      if (this.cardTimer) clearTimeout(this.cardTimer);
-      this.cardTimer = setTimeout(() => (this.el.getcard.hidden = true), 1800);
     }
     this.lastItem = s.item;
     this.el.slot1.classList.toggle("full", s.item !== ItemKind.None);
     this.el.slot2.hidden = !s.twin;
     this.set("glyph2", GLYPHS[s.item2] ?? "");
     this.set("count2", s.item2Count > 1 ? `×${s.item2Count}` : "");
-    this.el.items.hidden = s.spectating;
+    // Nothing to show until you're holding something.
+    this.el.items.hidden = s.spectating || s.item === ItemKind.None;
     this.el.spectate.hidden = !s.spectating;
 
     // Drift meter: shows exactly when a boost is banked.
@@ -336,19 +289,20 @@ export class Hud {
     const gpuKey = `${s.gpus}`;
     if (this.last.gpus !== gpuKey) {
       this.last.gpus = gpuKey;
-      this.el.gpus.innerHTML = `${Array.from({ length: MAX_GPUS }, (_, i) => `<b class="${i < s.gpus ? "on" : ""}"></b>`).join("")}<span>${s.gpus} GPU${s.gpus === 1 ? "" : "s"}</span>`;
+      this.el.gpus.textContent = String(s.gpus);
+      this.el.gpus.classList.toggle("max", s.gpus >= MAX_GPUS);
     }
-    this.el.gpus.hidden = s.spectating;
-    this.el.draft.hidden = s.draft <= 0.05 || s.spectating;
-    if (s.draft > 0.05) this.el.draftFill.style.width = `${Math.min(1, s.draft) * 100}%`;
+    this.el.gpus.hidden = s.spectating || s.gpus === 0;
     this.el.nitro.hidden = s.spectating;
+    // Slipstream shows on the meter it fills instead of with a bar of its own.
+    this.el.nitro.classList.toggle("filling", s.draft > 0.05 && !s.nitroLit);
     this.el.nitroFill.style.width = `${Math.max(0, Math.min(1, s.nitro)) * 100}%`;
     const nitroState = s.nitroLit ? "lit" : s.nitro >= 0.99 ? "full" : s.nitro >= NITRO_MIN ? "ready" : "";
     if (this.last.nitroState !== nitroState) {
       this.last.nitroState = nitroState;
       this.el.nitro.dataset.state = nitroState;
     }
-    this.el.emotes.hidden = s.spectating;
+
 
     // Every slowdown says exactly what caused it.
     const cause = SLOW_CAUSES.find((c) => s.slowFlags & c.flag);
@@ -373,6 +327,7 @@ export class Hud {
       if (text) center.classList.add("slam");
     }
     this.el.tips.hidden = s.spectating || !(countdown > 0 || (s.racing && s.raceSeconds < 4));
+    this.el.emotes.hidden = this.el.tips.hidden;
 
     this.set("status", s.status);
     this.el.status.classList.toggle("bad", s.statusBad);
@@ -424,7 +379,7 @@ export class Hud {
     const p = document.createElement("p");
     p.textContent = text;
     this.el.feed.prepend(p);
-    while (this.el.feed.children.length > 5) this.el.feed.lastElementChild?.remove();
-    setTimeout(() => p.remove(), 6000);
+    while (this.el.feed.children.length > 3) this.el.feed.lastElementChild?.remove();
+    setTimeout(() => p.remove(), 4000);
   }
 }

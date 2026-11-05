@@ -160,6 +160,57 @@ const windowTexture = (lit: boolean) =>
       }
   });
 
+/**
+ * Item box face: a "?" on a tile. The color map is a light tile the instance
+ * color tints; the glow map lights only the "?" and the rim, so the box stays
+ * saturated instead of washing out to white.
+ */
+const itemBoxTexture = (glow: boolean) =>
+  canvasTexture(128, 128, (ctx) => {
+    ctx.fillStyle = glow ? "#000000" : "#e6e6e6";
+    ctx.fillRect(0, 0, 128, 128);
+    ctx.fillStyle = glow ? "#8a8a8a" : "#ffffff";
+    ctx.fillRect(0, 0, 128, 9);
+    ctx.fillRect(0, 119, 128, 9);
+    ctx.fillRect(0, 0, 9, 128);
+    ctx.fillRect(119, 0, 9, 128);
+    ctx.font = "900 italic 100px 'Barlow Condensed', 'Arial Narrow', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    if (!glow) {
+      ctx.lineWidth = 12;
+      ctx.strokeStyle = "#11142a";
+      ctx.strokeText("?", 66, 70);
+    }
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText("?", 66, 70);
+  });
+
+/** A graphics card seen from above: green board, two fans, gold edge connector. */
+const gpuTexture = () =>
+  canvasTexture(128, 80, (ctx) => {
+    ctx.fillStyle = "#1d2a12";
+    ctx.fillRect(0, 0, 128, 80);
+    ctx.fillStyle = "#76b900";
+    ctx.fillRect(4, 4, 120, 60);
+    ctx.fillStyle = "#ffc93c";
+    for (let x = 12; x < 116; x += 6) ctx.fillRect(x, 66, 4, 12);
+    for (const cx of [36, 92]) {
+      ctx.fillStyle = "#11142a";
+      ctx.beginPath();
+      ctx.arc(cx, 34, 22, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#b9f24a";
+      ctx.lineWidth = 3;
+      for (let a = 0; a < 7; a++) {
+        ctx.beginPath();
+        ctx.moveTo(cx, 34);
+        ctx.lineTo(cx + Math.cos((a / 7) * Math.PI * 2) * 19, 34 + Math.sin((a / 7) * Math.PI * 2) * 19);
+        ctx.stroke();
+      }
+    }
+  });
+
 const floorTexture = (theme: TrackTheme) =>
   canvasTexture(128, 128, (ctx) => {
     ctx.fillStyle = hex(theme.ground);
@@ -222,6 +273,8 @@ const strip = (
 export interface TrackScene {
   readonly group: THREE.Group;
   update(time: number, boxesReady: Uint8Array | null, coinsReady: Uint8Array | null, kartNear: (s: number, d: number) => boolean): void;
+  /** Called when a box or GPU someone just took disappears, with where it was. */
+  onPickup: ((kind: "box" | "gpu", at: THREE.Vector3) => void) | null;
   dispose(): void;
 }
 
@@ -409,9 +462,12 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
     }
   }
 
-  const boxGeo = keep(new THREE.BoxGeometry(1.6, 1.6, 1.6));
+  // Item boxes: solid, bright, a "?" on every face, so a row reads from far down the road.
+  const boxTex = keep(itemBoxTexture(false));
+  const boxGlow = keep(itemBoxTexture(true));
+  const boxGeo = keep(new THREE.BoxGeometry(2, 2, 2));
   const boxMat = keep(new THREE.MeshStandardMaterial({
-    color: 0xffffff, emissive: 0x3de0ff, emissiveIntensity: 0.5, transparent: true, opacity: 0.85, roughness: 0.15, metalness: 0.2,
+    color: 0xffffff, map: boxTex, emissive: 0xffffff, emissiveMap: boxGlow, emissiveIntensity: 0.9, roughness: 0.4, metalness: 0.05,
   }));
   const boxes = new THREE.InstancedMesh(boxGeo, boxMat, Math.max(1, track.itemBoxes.length));
   boxes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -421,12 +477,28 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
     return new THREE.Vector3(pose.ux, pose.uy, pose.uz);
   });
   const boxColor = new THREE.Color();
-  track.itemBoxes.forEach((_, i) => boxes.setColorAt(i, boxColor.setHSL((i * 0.13) % 1, 0.9, 0.62)));
+  track.itemBoxes.forEach((_, i) => boxes.setColorAt(i, boxColor.setHSL((i * 0.13) % 1, 1, 0.5)));
   group.add(boxes);
+  // A glowing ring on the road under each box.
+  const boxRingMat = keep(new THREE.MeshBasicMaterial({
+    color: 0xffc93c, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  }));
+  const rings = new THREE.InstancedMesh(keep(new THREE.RingGeometry(1.1, 1.6, 24)), boxRingMat, Math.max(1, track.itemBoxes.length));
+  rings.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  const ringPose = track.itemBoxes.map((b) => {
+    const at = trackPoint(track, b.s, b.d, 0.08, new THREE.Vector3());
+    poseAt(track, b.s, b.d, 0, pose);
+    const up = new THREE.Vector3(pose.ux, pose.uy, pose.uz);
+    return { at, turn: new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), up) };
+  });
+  group.add(rings);
 
-  // GPUs: little glowing graphics cards spinning above the road.
-  const coinMat = keep(new THREE.MeshStandardMaterial({ color: 0x76b900, emissive: 0x76b900, emissiveIntensity: 0.55, metalness: 0.6, roughness: 0.25 }));
-  const coins = new THREE.InstancedMesh(keep(new THREE.BoxGeometry(1.15, 0.16, 0.72)), coinMat, Math.max(1, track.coins.length));
+  // GPUs: chunky glowing graphics cards spinning above the road.
+  const gpuTex = keep(gpuTexture());
+  const coinMat = keep(new THREE.MeshStandardMaterial({
+    color: 0xffffff, map: gpuTex, emissive: 0x76b900, emissiveMap: gpuTex, emissiveIntensity: 0.8, metalness: 0.3, roughness: 0.35,
+  }));
+  const coins = new THREE.InstancedMesh(keep(new THREE.BoxGeometry(1.7, 0.28, 1.06)), coinMat, Math.max(1, track.coins.length));
   coins.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   const coinBase = track.coins.map((c) => trackPoint(track, c.s, c.d, c.h, new THREE.Vector3()));
   group.add(coins);
@@ -493,7 +565,7 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
     group.add(mesh);
   }
   group.traverse((o) => {
-    if (o !== boxes && o !== coins) {
+    if (o !== boxes && o !== coins && o !== rings) {
       o.updateMatrix();
       o.matrixAutoUpdate = false;
     }
@@ -502,13 +574,19 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
   scene.add(group);
 
   const tmp = new THREE.Object3D();
-  return {
+  const coinWas = new Uint8Array(coinBase.length).fill(1);
+  const boxWas = new Uint8Array(boxBase.length).fill(1);
+  const result: TrackScene = {
     group,
+    onPickup: null,
     update(time, boxesReady, coinsReady, kartNear) {
       for (let i = 0; i < coinBase.length; i++) {
         const ready = coinsReady ? coinsReady[i] === 1 : true;
+        if (!ready && coinWas[i]) result.onPickup?.("gpu", coinBase[i]);
+        coinWas[i] = ready ? 1 : 0;
         tmp.position.copy(coinBase[i]);
-        tmp.rotation.set(0.5, time * 3 + i * 0.4, 0.2);
+        tmp.position.y += Math.sin(time * 3 + i * 0.7) * 0.2;
+        tmp.rotation.set(0.35, time * 2.4 + i * 0.4, 0);
         tmp.scale.setScalar(ready ? 1 : 0.0001);
         tmp.updateMatrix();
         coins.setMatrixAt(i, tmp.matrix);
@@ -518,13 +596,22 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
       slowTex.offset.y = time * 1.2;
       for (let i = 0; i < boxBase.length; i++) {
         const ready = boxesReady ? boxesReady[i] === 1 : true;
+        if (!ready && boxWas[i]) result.onPickup?.("box", boxBase[i]);
+        boxWas[i] = ready ? 1 : 0;
         tmp.position.copy(boxBase[i]).addScaledVector(boxUp[i], Math.sin(time * 2 + i) * 0.25);
         tmp.rotation.set(time * 0.7 + i, time * 1.1 + i, 0);
         tmp.scale.setScalar(ready ? 1 : 0.0001);
         tmp.updateMatrix();
         boxes.setMatrixAt(i, tmp.matrix);
+        const ring = ringPose[i];
+        tmp.position.copy(ring.at);
+        tmp.quaternion.copy(ring.turn);
+        tmp.scale.setScalar(ready ? 1 + Math.sin(time * 4 + i) * 0.08 : 0.0001);
+        tmp.updateMatrix();
+        rings.setMatrixAt(i, tmp.matrix);
       }
       boxes.instanceMatrix.needsUpdate = true;
+      rings.instanceMatrix.needsUpdate = true;
       for (const b of bumpers) {
         if (kartNear(b.s, b.d)) b.pulse = 1;
         b.pulse = Math.max(0, b.pulse - 0.05);
@@ -535,11 +622,13 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
       scene.remove(group);
       for (const d of disposables) d.dispose();
       boxes.dispose();
+      rings.dispose();
       buildings.dispose();
       pillars.dispose();
       coins.dispose();
     },
   };
+  return result;
 };
 
 /* ---------------- karts ---------------- */
