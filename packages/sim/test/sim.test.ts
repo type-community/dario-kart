@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  BoostKind, InputBit, SlowFlag, ItemKind, KARTS, Phase, THEMES, World, botInput, decodeInputs, decodeSnapshot, encodeInputs,
+  BoostKind, CHAIN_WINDOW, CLOSE_PASS_WIDTH, InputBit, NITRO_CLOSE_PASS, NITRO_MIN, NITRO_SECONDS, SlowFlag, ItemKind, KARTS, Phase, THEMES, World, botInput, decodeInputs, decodeSnapshot, encodeInputs,
   encodeSnapshot, GapStats, cleanNetReport, generateTrack, makeInput, snapshotSize, targetTrackLength,
 } from "../src/index.ts";
 
@@ -133,43 +133,68 @@ describe("feel", () => {
     for (const theme of THEMES) expect(generateTrack(theme.id, 11, 8).loops.length).toBeGreaterThan(0);
   });
 
-  test("a Compute Boost item boosts you and fires nothing", () => {
+  test("holding Nitro burns the Compute meter as a boost", () => {
     const world = solo();
     skipCountdown(world);
     const kart = world.karts[0];
-    kart.item = ItemKind.Boost;
-    kart.itemCount = 1;
     const inputs = world.karts.map(() => makeInput());
-    inputs[0].bits = InputBit.Item | InputBit.Throttle;
+    kart.nitro = NITRO_MIN / 2;
+    inputs[0].bits = InputBit.Nitro | InputBit.Throttle;
     world.step(inputs);
-    expect(kart.item).toBe(ItemKind.None);
-    expect(kart.boostKind).toBe(BoostKind.Item);
-    expect(kart.boostT).toBeGreaterThan(1);
-    expect(world.missiles.some((m) => m.active)).toBe(false);
+    // Too little to light.
+    expect(kart.nitroLit).toBe(0);
+    kart.nitro = 1;
+    let ticks = 0;
+    while (kart.nitro > 0 && ticks < 600) {
+      world.step(inputs);
+      expect(kart.nitroLit).toBe(1);
+      ticks++;
+    }
+    // Once lit it burns all the way down, past the lighting minimum.
+    expect(ticks / 60).toBeCloseTo(NITRO_SECONDS, 1);
+    inputs[0].bits = InputBit.Throttle;
+    world.step(inputs);
+    expect(kart.nitroLit).toBe(0);
+    // Holding the button on an empty meter doesn't relight it as the meter refills.
+    inputs[0].bits = InputBit.Nitro | InputBit.Throttle;
+    kart.nitro = NITRO_MIN / 2;
+    world.step(inputs);
+    expect(kart.nitroLit).toBe(0);
   });
 
-  test("items can't be used until the roulette stops", () => {
+  test("item boxes give a missile you can fire straight away", () => {
     const world = solo();
     skipCountdown(world);
     const kart = world.karts[0];
-    kart.item = ItemKind.Missile;
-    kart.itemCount = 1;
-    kart.itemRollT = 1;
+    const box = world.track.itemBoxes[0];
+    kart.dist = box.s;
+    kart.d = box.d;
     const inputs = world.karts.map(() => makeInput());
-    inputs[0].bits = InputBit.Item;
     world.step(inputs);
     expect(kart.item).toBe(ItemKind.Missile);
-    inputs[0].bits = 0;
-    for (let t = 0; t < 70; t++) world.step(inputs);
     inputs[0].bits = InputBit.Item;
     world.step(inputs);
     expect(kart.item).toBe(ItemKind.None);
+    expect(world.missiles.some((m) => m.active)).toBe(true);
+  });
+
+  test("letting go of the steering lines the kart back up with the road", () => {
+    const world = solo();
+    skipCountdown(world);
+    const kart = world.karts[0];
+    kart.speed = 30;
+    kart.heading = 0.4;
+    const inputs = world.karts.map(() => makeInput());
+    inputs[0].bits = InputBit.Throttle;
+    for (let t = 0; t < 60; t++) world.step(inputs);
+    expect(Math.abs(kart.heading)).toBeLessThan(0.15);
   });
 
   test("a glancing wall scrape costs almost nothing, a head-on hit is flagged", () => {
     const world = solo();
     skipCountdown(world);
-    const kart = world.karts[0];
+    // Not Claude: its perk shrugs walls off.
+    const kart = world.karts[1];
     const limit = world.track.halfWidth - 1;
     const idle = world.karts.map(() => makeInput());
     kart.d = limit - 0.05;
@@ -226,20 +251,92 @@ describe("fun mechanics", () => {
     expect(countdownWith(-1).startResult).toBe(0);
   });
 
-  test("slipstream builds into a boost", () => {
+  test("slipstream tows you and fills the Compute meter", () => {
     const world = new World({ theme: "nyc", seed: 4, racers: racers(2) });
     const inputs = world.karts.map(() => makeInput());
     while (world.phase !== Phase.Racing) world.step(inputs);
     const [chaser, leader] = world.karts;
-    let boosted = false;
-    for (let t = 0; t < 120 && !boosted; t++) {
+    const before = chaser.nitro;
+    for (let t = 0; t < 90; t++) {
       leader.dist = chaser.dist + 10;
       leader.d = chaser.d;
       chaser.speed = Math.max(chaser.speed, 40);
       world.step(inputs);
-      boosted = chaser.boostKind === BoostKind.Draft;
     }
-    expect(boosted).toBe(true);
+    expect(chaser.draft).toBe(1);
+    expect(chaser.nitro).toBeGreaterThan(before + 0.3);
+  });
+
+  test("a close pass fills the meter, a bump doesn't count", () => {
+    const pass = (side: number) => {
+      const world = new World({ theme: "nyc", seed: 4, racers: racers(2) });
+      const inputs = world.karts.map(() => makeInput());
+      while (world.phase !== Phase.Racing) world.step(inputs);
+      const [me, them] = world.karts;
+      me.nitro = 0;
+      me.dist = them.dist - 3;
+      me.d = them.d + side;
+      me.speed = 45;
+      them.speed = 25;
+      inputs[0].bits = InputBit.Throttle;
+      for (let t = 0; t < 30; t++) world.step(inputs);
+      return me;
+    };
+    const close = pass(3);
+    expect(close.passes).toBe(1);
+    expect(close.nitro).toBeGreaterThanOrEqual(NITRO_CLOSE_PASS);
+    expect(pass(CLOSE_PASS_WIDTH + 2).passes).toBe(0);
+  });
+
+  test("chained drifts build bigger boosts; a wall breaks the chain", () => {
+    // Grok: Claude's perk shrugs off the wall hit this test needs.
+    const world = new World({ theme: "sf", seed: 2, racers: [{ kart: 1, character: 0, bot: true }] });
+    const inputs = world.karts.map(() => makeInput());
+    while (world.phase !== Phase.Racing) world.step(inputs);
+    const kart = world.karts[0];
+    const flat = () => {
+      kart.d = 0;
+      kart.z = 0;
+      kart.vz = 0;
+    };
+    const drift = () => {
+      flat();
+      kart.heading = 0;
+      kart.speed = 40;
+      inputs[0].steer = 1;
+      inputs[0].bits = InputBit.Throttle | InputBit.Drift;
+      for (let t = 0; t < 50; t++) {
+        flat();
+        world.step(inputs);
+      }
+      inputs[0].bits = InputBit.Throttle;
+      inputs[0].steer = 0;
+      world.step(inputs);
+      return kart.boostT;
+    };
+    const first = drift();
+    expect(kart.driftChain).toBe(1);
+    drift();
+    const third = drift();
+    expect(kart.driftChain).toBe(3);
+    expect(third).toBeGreaterThan(first * 1.2);
+    // A head-on wall hit breaks it.
+    kart.d = world.track.halfWidth - 1.2;
+    kart.heading = 1.2;
+    kart.wallT = 0;
+    world.step(inputs);
+    world.step(inputs);
+    expect(kart.driftChain).toBe(0);
+    // So does waiting too long between drifts.
+    drift();
+    drift();
+    expect(kart.driftChain).toBe(2);
+    for (let t = 0; t < CHAIN_WINDOW * 60 + 5; t++) {
+      flat();
+      world.step(inputs);
+    }
+    drift();
+    expect(kart.driftChain).toBe(1);
   });
 
   test("a trick in the air pays out on landing", () => {

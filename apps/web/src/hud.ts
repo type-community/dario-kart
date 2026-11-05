@@ -1,16 +1,13 @@
 import {
-  BoostKind, DRAFT_SECONDS, DRIFT_TIER1, DRIFT_TIER2, DRIFT_TIER3, MAX_GPUS, SlowFlag, ITEM_NAMES, ITEM_ROLL_SECONDS, ItemKind, KARTS, type Track,
+  BoostKind, DRIFT_TIER1, DRIFT_TIER2, DRIFT_TIER3, MAX_GPUS, NITRO_MIN, SlowFlag, ITEM_NAMES, ItemKind, type Track,
 } from "@dario-kart/sim";
 
 const GLYPHS: Record<number, string> = {
   [ItemKind.Missile]: "🚀",
-  [ItemKind.Boost]: "⚡",
 };
-const REEL = [GLYPHS[ItemKind.Missile], GLYPHS[ItemKind.Boost]];
 
 const ITEM_HINT: Record<number, string> = {
   [ItemKind.Missile]: "E fires ahead, Q fires behind",
-  [ItemKind.Boost]: "E for a burst of speed",
 };
 
 const SLOW_CAUSES = [
@@ -25,10 +22,10 @@ const BOOST_NAMES: Record<number, string> = {
   [BoostKind.SuperDrift]: "Super boost",
   [BoostKind.Landing]: "Landing boost",
   [BoostKind.UltraDrift]: "ULTRA boost",
-  [BoostKind.Draft]: "Slipstream boost",
   [BoostKind.Trick]: "Trick boost",
-  [BoostKind.Item]: "Compute Boost",
+  [BoostKind.Nitro]: "Compute Boost",
 };
+const DRIFT_BOOSTS: ReadonlySet<number> = new Set([BoostKind.Drift, BoostKind.SuperDrift, BoostKind.UltraDrift]);
 
 export interface HudState {
   place: number;
@@ -55,11 +52,15 @@ export interface HudState {
   drifting: boolean;
   driftCharge: number;
   boostKind: number;
-  itemRollT: number;
   slowFlags: number;
-  kartModel: number;
   gpus: number;
-  draftCharge: number;
+  /** Slipstream strength, 0..1. */
+  draft: number;
+  /** Compute meter, 0..1. */
+  nitro: number;
+  nitroLit: boolean;
+  driftChain: number;
+  passes: number;
 }
 
 export interface MapDot {
@@ -91,7 +92,8 @@ export class Hud {
   private lastCountdown = -1;
   private tachBars: HTMLElement[] = [];
   private lastBoostKind = 0;
-  private wasRolling = false;
+  private lastItem = 0;
+  private lastPasses = 0;
   private calloutTimer: ReturnType<typeof setTimeout> | null = null;
   private cardTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -119,14 +121,14 @@ export class Hud {
       <div class="hud-banner" data-k="banner" hidden><strong data-k="bannerTitle"></strong><span data-k="bannerSub"></span></div>
       <div class="hud-placepop" data-k="placepop" hidden></div>
       <div class="hud-wrongway" data-k="wrongway" hidden>Wrong way</div>
-      <div class="hud-draft" data-k="draft" hidden><span>Slipstream</span><i data-k="draftFill"></i></div>
+      <div class="hud-draft" data-k="draft" hidden><span>Slipstream · filling Compute</span><i data-k="draftFill"></i></div>
       <div class="hud-emotes" data-k="emotes"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> trash talk <kbd>M</kbd> sound</div>
       <div class="hud-tips" data-k="tips" hidden>
         <p>Press <kbd>W</kbd> right as it says 2 → 1 for a rocket start</p>
-        <p>Hold <kbd>Space</kbd> while turning to drift. Sparks go blue, then pink. Let go to boost.</p>
+        <p>Hold <kbd>Space</kbd> while turning to drift. Sparks go blue, then pink. Let go to boost. Chain drifts for bigger boosts</p>
+        <p>Drift, slipstream and pass close to fill your Compute meter. Hold <kbd>Shift</kbd> to burn it</p>
         <p>Tap <kbd>Space</kbd> in the air to trick. Land it for a boost</p>
         <p>Grab green GPUs: each one adds top speed. Hits make you drop them</p>
-        <p>Tuck in behind a rival to slipstream</p>
         <p><kbd>Esc</kbd> to leave</p>
       </div>
       <div class="hud-pos"><span class="place" data-k="place"></span><span class="of" data-k="of"></span></div>
@@ -134,6 +136,7 @@ export class Hud {
         <div class="gpus" data-k="gpus"></div>
         <div><span class="num" data-k="speed"></span> <span class="unit">km/h</span></div>
         <div class="tach" data-k="tach"></div>
+        <div class="nitro" data-k="nitro"><span>Compute · hold Shift</span><div class="bar"><i data-k="nitroFill"></i></div></div>
         <div class="hp"><i data-k="hp"></i></div>
       </div>
       <div class="hud-spectate" data-k="spectate" hidden>Spectating. You'll join the next race.</div>
@@ -157,7 +160,8 @@ export class Hud {
     this.lastCountdown = -1;
     this.last = {};
     this.lastBoostKind = 0;
-    this.wasRolling = false;
+    this.lastItem = 0;
+    this.lastPasses = 0;
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (let k = 0; k < track.count; k++) {
       minX = Math.min(minX, track.px[k]); maxX = Math.max(maxX, track.px[k]);
@@ -275,49 +279,26 @@ export class Hud {
     }
     this.el.hp.style.width = `${Math.max(0, Math.min(1, s.hp / s.hpMax)) * 100}%`;
 
-    // Item roulette: spin through the reel, then land on what you actually got.
-    const rolling = s.itemRollT > 0 && s.item !== ItemKind.None;
-    if (rolling) {
-      const progress = 1 - s.itemRollT / ITEM_ROLL_SECONDS;
-      const speed = 22 - progress * 16;
-      const frame = Math.floor(performance.now() / (1000 / speed)) % REEL.length;
-      this.set("glyph1", REEL[frame]);
-      this.el.slot1.classList.add("rolling");
-      this.set("count1", "");
-      this.set("itemName", "");
-    } else {
-      this.el.slot1.classList.remove("rolling");
-      this.set("glyph1", GLYPHS[s.item] ?? "");
-      this.set("count1", s.itemCount > 1 ? `×${s.itemCount}` : "");
-      const name = s.item === ItemKind.None ? "" : ITEM_NAMES[s.item];
-      if (this.last.itemName !== name) {
-        this.last.itemName = name;
-        this.el.itemName.innerHTML = name ? `${name}<small>${ITEM_HINT[s.item] ?? ""}</small>` : "";
-      }
+    this.set("glyph1", GLYPHS[s.item] ?? "");
+    this.set("count1", s.itemCount > 1 ? `×${s.itemCount}` : "");
+    const name = s.item === ItemKind.None ? "" : ITEM_NAMES[s.item];
+    if (this.last.itemName !== name) {
+      this.last.itemName = name;
+      this.el.itemName.innerHTML = name ? `${name}<small>${ITEM_HINT[s.item] ?? ""}</small>` : "";
     }
-    if (rolling && !this.wasRolling) {
-      this.el.getcard.hidden = false;
-      this.el.getcard.className = "hud-getcard rolling";
-      this.set("getName", "Item box!");
-      this.set("getHint", "");
-      if (this.cardTimer) clearTimeout(this.cardTimer);
-    }
-    if (rolling) {
-      const progress = 1 - s.itemRollT / ITEM_ROLL_SECONDS;
-      const frame = Math.floor(performance.now() / (1000 / (24 - progress * 18))) % REEL.length;
-      this.set("getGlyph", REEL[frame]);
-    }
-    if (this.wasRolling && !rolling && s.item !== ItemKind.None) {
+    if (s.item !== ItemKind.None && this.lastItem === ItemKind.None && !s.spectating) {
       this.el.slot1.classList.remove("landed");
       void this.el.slot1.offsetWidth;
       this.el.slot1.classList.add("landed");
+      this.el.getcard.hidden = false;
       this.el.getcard.className = "hud-getcard landed";
       this.set("getGlyph", GLYPHS[s.item] ?? "");
       this.set("getName", ITEM_NAMES[s.item]);
       this.set("getHint", ITEM_HINT[s.item] ?? "");
+      if (this.cardTimer) clearTimeout(this.cardTimer);
       this.cardTimer = setTimeout(() => (this.el.getcard.hidden = true), 1800);
     }
-    this.wasRolling = rolling;
+    this.lastItem = s.item;
     this.el.slot1.classList.toggle("full", s.item !== ItemKind.None);
     this.el.slot2.hidden = !s.twin;
     this.set("glyph2", GLYPHS[s.item2] ?? "");
@@ -332,14 +313,19 @@ export class Hud {
       const tier = s.driftCharge >= DRIFT_TIER3 ? 3 : s.driftCharge >= DRIFT_TIER2 ? 2 : s.driftCharge >= DRIFT_TIER1 ? 1 : 0;
       this.el.driftFill.style.width = `${fill * 100}%`;
       this.el.drift.dataset.tier = String(tier);
-      this.set("driftLabel", tier === 3 ? "ULTRA boost ready. Let go!" : tier === 2 ? "Super boost ready. Hold for ULTRA" : tier === 1 ? "Mini boost ready. Hold for super" : "Drifting");
+      const label = tier === 3 ? "ULTRA boost ready. Let go!" : tier === 2 ? "Super boost ready. Hold for ULTRA" : tier === 1 ? "Mini boost ready. Hold for super" : "Drifting";
+      // The chain bonus applies when this drift pays out, so show what it will be.
+      this.set("driftLabel", s.driftChain > 0 ? `${label} · chain ×${s.driftChain + 1}` : label);
     }
     if (s.boostKind !== this.lastBoostKind) {
       if (s.boostKind !== BoostKind.None && BOOST_NAMES[s.boostKind] && !s.spectating) {
-        this.callout(BOOST_NAMES[s.boostKind], s.boostKind === BoostKind.SuperDrift || s.boostKind === BoostKind.UltraDrift ? "super" : "boost");
+        const chained = DRIFT_BOOSTS.has(s.boostKind) && s.driftChain > 1 ? ` ×${s.driftChain} chain` : "";
+        this.callout(BOOST_NAMES[s.boostKind] + chained, s.boostKind === BoostKind.SuperDrift || s.boostKind === BoostKind.UltraDrift || chained ? "super" : "boost");
       }
       this.lastBoostKind = s.boostKind;
     }
+    if (s.passes > this.lastPasses && !s.spectating) this.callout("Close pass! +Compute", "item");
+    this.lastPasses = s.passes;
 
     const gpuKey = `${s.gpus}`;
     if (this.last.gpus !== gpuKey) {
@@ -347,14 +333,22 @@ export class Hud {
       this.el.gpus.innerHTML = `${Array.from({ length: MAX_GPUS }, (_, i) => `<b class="${i < s.gpus ? "on" : ""}"></b>`).join("")}<span>${s.gpus} GPU${s.gpus === 1 ? "" : "s"}</span>`;
     }
     this.el.gpus.hidden = s.spectating;
-    this.el.draft.hidden = s.draftCharge <= 0.05 || s.spectating;
-    if (s.draftCharge > 0.05) this.el.draftFill.style.width = `${Math.min(1, s.draftCharge / DRAFT_SECONDS) * 100}%`;
+    this.el.draft.hidden = s.draft <= 0.05 || s.spectating;
+    if (s.draft > 0.05) this.el.draftFill.style.width = `${Math.min(1, s.draft) * 100}%`;
+    this.el.nitro.hidden = s.spectating;
+    this.el.nitroFill.style.width = `${Math.max(0, Math.min(1, s.nitro)) * 100}%`;
+    const nitroState = s.nitroLit ? "lit" : s.nitro >= 0.99 ? "full" : s.nitro >= NITRO_MIN ? "ready" : "";
+    if (this.last.nitroState !== nitroState) {
+      this.last.nitroState = nitroState;
+      this.el.nitro.dataset.state = nitroState;
+    }
     this.el.emotes.hidden = s.spectating;
 
     // Every slowdown says exactly what caused it.
     const cause = SLOW_CAUSES.find((c) => s.slowFlags & c.flag);
     this.el.slow.hidden = !cause || s.spectating;
     this.el.vignette.classList.toggle("on", !!cause && !s.spectating);
+    this.el.vignette.classList.toggle("nitro", s.nitroLit && !s.spectating);
     this.el.speed.classList.toggle("slowed", !!cause);
     if (cause) {
       this.set("slowIcon", cause.icon);

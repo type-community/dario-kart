@@ -187,6 +187,11 @@ export class Sound {
     this.tone(midi(91), 0.3, { type: "triangle", gain: 0.12, delay: 0.16 });
   }
 
+  /** A close pass: air rushing by. */
+  whoosh(): void {
+    this.burst(0.35, 900, { sweep: 4200, gain: 0.16, q: 0.6 });
+  }
+
   fire(): void {
     this.burst(0.25, 2500, { sweep: 400, gain: 0.14 });
   }

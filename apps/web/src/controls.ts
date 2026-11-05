@@ -4,10 +4,11 @@ const LEFT = new Set(["ArrowLeft", "KeyA"]);
 const RIGHT = new Set(["ArrowRight", "KeyD"]);
 const UP = new Set(["ArrowUp", "KeyW"]);
 const DOWN = new Set(["ArrowDown", "KeyS"]);
-const DRIFT = new Set(["Space", "ShiftLeft", "ShiftRight"]);
+const DRIFT = new Set(["Space", "ShiftRight"]);
+const NITRO = new Set(["ShiftLeft", "KeyF"]);
 const ITEM = new Set(["KeyE", "KeyJ", "Enter"]);
 const BACK = new Set(["KeyQ"]);
-const GAME_KEYS = new Set([...LEFT, ...RIGHT, ...UP, ...DOWN, ...DRIFT, ...ITEM, ...BACK]);
+const GAME_KEYS = new Set([...LEFT, ...RIGHT, ...UP, ...DOWN, ...DRIFT, ...NITRO, ...ITEM, ...BACK]);
 
 /** Keyboard + gamepad, sampled once per sim tick into a sim Input. */
 export class Controls {
@@ -46,6 +47,7 @@ export class Controls {
     if (this.any(UP)) bits |= InputBit.Throttle;
     if (this.any(DOWN)) bits |= InputBit.Brake | InputBit.Back;
     if (this.any(DRIFT)) bits |= InputBit.Drift;
+    if (this.any(NITRO)) bits |= InputBit.Nitro;
     if (this.any(ITEM)) bits |= InputBit.Item;
     if (this.any(BACK)) bits |= InputBit.Item | InputBit.Back;
 
@@ -62,7 +64,8 @@ export class Controls {
       const x = pad.axes[0] ?? 0;
       const y = pad.axes[1] ?? 0;
       if (Math.abs(x) > 0.15) analog = x;
-      if ((pad.buttons[7]?.value ?? 0) > 0.2 || pad.buttons[0]?.pressed) bits |= InputBit.Throttle;
+      if ((pad.buttons[7]?.value ?? 0) > 0.2) bits |= InputBit.Throttle;
+      if (pad.buttons[0]?.pressed) bits |= InputBit.Nitro;
       if ((pad.buttons[6]?.value ?? 0) > 0.2 || pad.buttons[1]?.pressed) bits |= InputBit.Brake;
       if (pad.buttons[5]?.pressed || pad.buttons[2]?.pressed) bits |= InputBit.Drift;
       if (pad.buttons[4]?.pressed || pad.buttons[3]?.pressed) bits |= InputBit.Item;

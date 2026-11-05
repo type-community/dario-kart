@@ -59,13 +59,13 @@ export const KARTS: ReadonlyArray<KartModel> = [
     id: "grok", name: "Grok", color: 0x111111, accent: 0xe6e6e6,
     speed: 10, handling: 5, reliability: 4, durability: 9,
     perk: "unhinged", perkName: "Unhinged",
-    perkText: "Boosts hit 5% harder.",
+    perkText: "Boosts hit 3% harder.",
   },
   {
     id: "gippity", name: "Gippity", color: 0x10a37f, accent: 0xffffff,
     speed: 7, handling: 7, reliability: 7, durability: 7,
     perk: "plugins", perkName: "Plugins",
-    perkText: "Compute Boosts last 15% longer.",
+    perkText: "A full Compute meter burns 25% longer.",
   },
   {
     id: "qwen", name: "Qwen", color: 0x615ced, accent: 0xffffff,
@@ -83,7 +83,7 @@ export const KARTS: ReadonlyArray<KartModel> = [
     id: "astra", name: "Astra", color: 0x34a853, accent: 0xfbbc05,
     speed: 4, handling: 7, reliability: 7, durability: 10,
     perk: "tank", perkName: "Tank",
-    perkText: "Missiles do half damage and spin you out for half as long. You only drop 1 GPU when hit.",
+    perkText: "Missiles do half damage and spin you out for a quarter less time. You only drop 1 GPU when hit.",
   },
   {
     id: "gemini", name: "Gemini", color: 0x4285f4, accent: 0xa142f4,
@@ -157,14 +157,12 @@ export const THEMES: ReadonlyArray<TrackTheme> = [
 export const ItemKind = {
   None: 0,
   Missile: 1,
-  Boost: 2,
 } as const;
 export type ItemKind = (typeof ItemKind)[keyof typeof ItemKind];
 
 export const ITEM_NAMES: Record<number, string> = {
   0: "",
   1: "Outage Missile",
-  2: "Compute Boost",
 };
 
 export const kartById = (id: string): KartModel => KARTS.find((k) => k.id === id) ?? KARTS[0];

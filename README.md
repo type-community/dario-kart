@@ -15,18 +15,21 @@ bun run dev        # alchemy dev: game Worker + Durable Objects in workerd, Vite
 - **Practice against bots** runs the whole simulation in your browser, with no server.
 - Handy URL flags: `?practice&track=nyc`, `?practice&autopilot` (bot drives you), `?race=CODE&name=You`.
 
-Controls: `W A S D` or arrow keys to drive, `Space` to drift (sparks go blue, then pink; release for a boost), `E` to use your item, `Q` (or hold `S`) to fire backward, `Esc` to pause or leave. Gamepads work too.
+Controls: `W A S D` or arrow keys to drive, `Space` to drift (sparks go blue, then pink; release for a boost), `Shift` or `F` to burn your Compute meter, `E` to fire a missile, `Q` (or hold `S`) to fire backward, `Esc` to pause or leave. Gamepads work too (`A` is nitro, `RT` is gas).
 
 ## What makes it fun
 
 - **Rocket start:** press `W` just before "Go" for a boost. Holding it the whole countdown is just a normal start.
+- **Compute meter (the nitro):** driving with style fills it: drifting, slipstreaming and close passes (overtaking within a few meters without touching). Landing a trick adds a bit too. Hold `Shift` to burn it as a boost; a full meter lasts 2.2 seconds.
 - **Drift tiers:** sparks go white, blue, pink, purple. Release for a mini, super or ULTRA boost.
+- **Drift chains:** start your next drift within 2 seconds of a drift boost and the chain grows, up to ×4. Each link makes the boost 12% longer and fills the meter faster. A hard wall hit or a missile breaks it.
 - **Tricks:** tap `Space` in the air off any ramp, crest or bumper, then land it for a boost.
-- **Items:** item boxes give an Outage Missile (`E` fires ahead, `Q` behind) or a Compute Boost.
-- **Slipstream:** tuck in behind a rival and a charge builds into a boost.
+- **Items:** item boxes give an Outage Missile (`E` fires ahead, `Q` behind). Boosts come from your meter, not from boxes.
+- **Slipstream:** tuck in behind a rival and you get towed along (up to +5% top speed) while your meter fills.
 - **GPUs:** green chips on risky lines (loops, ramp arcs, banked walls). Each adds 1% top speed, up to 10; hits make you drop 3.
-- **Gentle catch-up:** far behind the leader you get up to +5% top speed, on top of position-weighted items.
-- **Feel:** synthesized engine, screech, stingers and synthwave music (faster on the final lap), speed lines, camera shake, field-of-view kicks, particles.
+- **Gentle catch-up:** far behind the leader you get up to +5% top speed, and slipstream naturally helps whoever is behind.
+- **Forgiving handling:** let go of the steering and the kart settles back in line with the road. Wall scrapes cost almost nothing.
+- **Feel:** synthesized engine, screech, stingers and synthwave music (faster on the final lap), speed lines, a camera that pulls back and hums at top speed, wind streaks while drafting or on nitro, field-of-view kicks, particles.
 - **Moments:** final lap and lap-split banners, overtake pops, wrong-way warning, podium and confetti.
 - **Trash talk:** `1`–`4` throw your driver's lines at the lobby. `M` mutes.
 
@@ -85,7 +88,7 @@ alchemy.run.ts    the whole stack: game Worker + Vite site
 - Kart stats are tuned with `scripts/balance.ts` (constants in `STAT` in `world.ts`): every kart's average finish is within about 0.05 of even across hundreds of bot races.
 - The server is authoritative. Clients predict their own kart, replay unacknowledged inputs on each snapshot, and render other karts about 115 ms in the past.
 - Races are 2 laps and about 50 seconds. Tracks get a little longer and wider with more racers (about 1.3 km for 8 players, 1.6 km for 30, 2.1 km for 100).
-- Item boxes give one of two items: an Outage Missile or a Compute Boost. The leader gets a boost 25% of the time and last place 75%, so missiles go to the front and boosts to the back.
+- Item boxes only hold Outage Missiles. Speed comes from the Compute meter, which you earn by driving well, so boosts reward skill rather than luck.
 - Accounts are ephemeral: a random id and your picks live in `localStorage`.
 
 ## Deploying

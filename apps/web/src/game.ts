@@ -1,5 +1,5 @@
 import {
-  COUNTDOWN_TICKS, type DecodedSnapshot, DT, type Input, ItemKind, KART_NET_FIELDS, type Kart, Phase,
+  BoostKind, COUNTDOWN_TICKS, type DecodedSnapshot, DT, type Input, ItemKind, KART_NET_FIELDS, type Kart, Phase,
   type RaceSlot, TICK_RATE, type ThemeId, World, applyKartFields, botInput, characterIndex,
   copyInput, kartIndex, makeInput, themeById, wrapS,
 } from "@dario-kart/sim";
@@ -116,6 +116,7 @@ interface Snap {
 const F = KART_NET_FIELDS.length;
 const FIELD = Object.fromEntries(KART_NET_FIELDS.map((k, i) => [k, i])) as Record<(typeof KART_NET_FIELDS)[number], number>;
 const INTERP_TICKS = 7;
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 
 const lerpAngle = (a: number, b: number, t: number) => {
   let delta = b - a;
@@ -178,11 +179,13 @@ export class RaceView {
   private readonly confetti = new Particles(700, 0.5, false);
   private shake = 0;
   private fovKick = 0;
+  /** Camera pulls back while boosting, so speed reads as distance. */
+  private camPull = 0;
   private readonly bubbles: Array<{ sprite: THREE.Sprite; parent: THREE.Object3D; until: number }> = [];
   private readonly prevStun: Float32Array;
   private readonly prevAir: Uint8Array;
   private readonly watch = {
-    sec: 99, start: 0, boost: 0, gpus: 0, stun: 0, air: false, trick: 0, tier: 0, roll: 0, rollFrame: -1,
+    sec: 99, start: 0, boost: 0, gpus: 0, stun: 0, air: false, trick: 0, tier: 0, passes: 0,
     lap: 1, place: 0, finished: false, wrongT: 0, lapStart: 0, bestLap: Infinity, itemCount: 0, item: 0,
   };
   private readonly speedLines = document.getElementById("speedlines") as HTMLCanvasElement | null;
@@ -538,7 +541,19 @@ export class RaceView {
       }
       if (kart.boostT > 0) {
         trackPoint(track, r.dist - c * 2.3, r.d - sn * 2.3, 0.5 + r.z, this.tmpA);
-        this.sparks.emit(this.tmpA.x, this.tmpA.y, this.tmpA.z, (Math.random() - 0.5) * 2, Math.random() * 2, (Math.random() - 0.5) * 2, kart.boostKind === 6 ? 0xb18cff : 0x3de0ff, 0.3);
+        const nitro = kart.nitroLit > 0;
+        const color = kart.boostKind === BoostKind.UltraDrift ? 0xb18cff : nitro ? 0x7af0ff : 0x3de0ff;
+        for (let n = nitro ? 3 : 1; n > 0; n--) {
+          this.sparks.emit(this.tmpA.x, this.tmpA.y, this.tmpA.z, (Math.random() - 0.5) * 2, Math.random() * 2, (Math.random() - 0.5) * 2, color, 0.3);
+        }
+      }
+      // Wind: streaks hang in the air ahead of you and whip past. Slipstream and nitro only.
+      if (i === this.setup.you && (kart.draft > 0.3 || kart.nitroLit) && kart.speed > 20) {
+        const ahead = 14 + Math.random() * 10;
+        const side = (Math.random() < 0.5 ? -1 : 1) * (1.4 + Math.random() * 2.2);
+        trackPoint(track, r.dist + c * ahead - sn * side, r.d + sn * ahead + c * side, 0.4 + Math.random() * 2.2 + r.z, this.tmpA);
+        const color = kart.nitroLit ? 0x7af0ff : 0xeef3ff;
+        this.sparks.emit(this.tmpA.x, this.tmpA.y, this.tmpA.z, 0, 0, 0, color, 0.45, 0);
       }
       if (kart.stunT > this.prevStun[i] + 0.3) {
         this.tmpA.copy(root.position).y += 1;
@@ -615,17 +630,12 @@ export class RaceView {
     const tier = me.drifting ? (me.driftCharge >= 2.3 ? 3 : me.driftCharge >= 1.4 ? 2 : me.driftCharge >= 0.7 ? 1 : 0) : 0;
     if (tier > w.tier) sound.driftTier(tier);
     w.tier = tier;
-    if (me.itemRollT > 0 && me.item) {
-      const frame = Math.floor(performance.now() / (1000 / (22 - (1 - me.itemRollT / 1.1) * 16)));
-      if (frame !== w.rollFrame) sound.itemTick();
-      w.rollFrame = frame;
-    } else if (w.roll > 0 && me.item) {
-      sound.itemLand();
-    }
-    w.roll = me.itemRollT;
-    if ((me.item !== w.item || me.itemCount < w.itemCount) && w.item === ItemKind.Missile && me.itemRollT <= 0 && (me.itemCount < w.itemCount || me.item === 0)) sound.fire();
+    if (me.item && !w.item) sound.itemLand();
+    if (w.item === ItemKind.Missile && (me.itemCount < w.itemCount || me.item === ItemKind.None)) sound.fire();
     w.item = me.item;
     w.itemCount = me.itemCount;
+    if (me.passes > w.passes) sound.whoosh();
+    w.passes = me.passes;
 
     if (world.phase === Phase.Racing && !me.finished) {
       const lap = world.lapOf(me);
@@ -677,7 +687,9 @@ export class RaceView {
       canvas.width = w;
       canvas.height = h;
     }
-    const intensity = focus && !this.paused ? Math.max(0, Math.min(1, (focus.speed - 42) / 30)) + (focus.boostT > 0 ? 0.6 : 0) : 0;
+    const intensity = focus && !this.paused
+      ? Math.max(0, Math.min(1, (focus.speed - 36) / 30)) + (focus.boostT > 0 ? 0.6 : 0) + (focus.nitroLit ? 0.3 : 0) + focus.draft * 0.25
+      : 0;
     if (this.speedLinesDrawn) ctx.clearRect(0, 0, w, h);
     this.speedLinesDrawn = intensity > 0;
     if (!focus || intensity <= 0) return;
@@ -715,8 +727,10 @@ export class RaceView {
     const kart = world.karts[target];
     const track = world.track;
     const attract = this.mode.kind === "attract";
-    const back = attract ? 11 : 7.2;
-    const height = attract ? 4.2 : 3.1;
+    const pullTarget = attract ? 0 : kart.nitroLit ? 1.8 : kart.boostT > 0 ? 1.1 : 0;
+    this.camPull += (pullTarget - this.camPull) * (pullTarget > this.camPull ? 0.06 : 0.03);
+    const back = attract ? 11 : 7.2 + this.camPull;
+    const height = attract ? 4.2 : 3.1 - this.camPull * 0.3;
     const sideways = attract ? Math.sin(this.time * 0.15) * 7 : 0;
     const heading = r.heading - (attract ? 0 : r.slip * 0.4);
     const desired = trackPoint(track, r.dist - Math.cos(heading) * back, r.d - Math.sin(heading) * back + sideways, r.z + height, this.camDesired);
@@ -739,10 +753,16 @@ export class RaceView {
       camera.position.z += (Math.random() - 0.5) * amp;
     }
     this.shake *= Math.exp(-6 / 60);
+    // Near top speed the camera hums: a fast, small, smooth shudder rather than random jitter.
+    const hum = attract || reducedMotion.matches ? 0 : Math.max(0, Math.min(1, (kart.speed - kart.maxSpeed * 0.8) / (kart.maxSpeed * 0.5)));
+    if (hum > 0) {
+      camera.position.y += Math.sin(this.time * 41) * 0.035 * hum;
+      camera.position.x += Math.sin(this.time * 29 + 1.3) * 0.025 * hum;
+    }
     camera.up.copy(this.camUp);
     camera.lookAt(this.camLook);
     this.fovKick *= Math.exp(-3 / 60);
-    const fov = 64 + Math.min(32, Math.max(0, kart.speed) * 0.36) + (kart.boostT > 0 ? 7 : 0) + this.fovKick;
+    const fov = 64 + Math.min(32, Math.max(0, kart.speed) * 0.36) + (kart.boostT > 0 ? 7 : 0) + (kart.nitroLit ? 4 : 0) + this.fovKick;
     const nextFov = camera.fov + (fov - camera.fov) * 0.08;
     if (Math.abs(nextFov - camera.fov) > 0.01) {
       camera.fov = nextFov;
@@ -791,11 +811,13 @@ export class RaceView {
       drifting: focus.drifting > 0,
       driftCharge: focus.driftCharge,
       boostKind: focus.boostKind,
-      itemRollT: focus.itemRollT,
       slowFlags: focus.slowFlags,
-      kartModel: focus.kartModel,
       gpus: focus.gpus,
-      draftCharge: focus.draftCharge,
+      draft: focus.draft,
+      nitro: focus.nitro,
+      nitroLit: focus.nitroLit > 0,
+      driftChain: focus.driftChain,
+      passes: focus.passes,
     };
     const dots: MapDot[] = this.render.map((r, i) => ({ dist: r.dist, d: r.d, me: i === this.setup.you }));
     hud.update(state, dots);

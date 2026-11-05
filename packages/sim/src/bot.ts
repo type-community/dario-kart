@@ -10,11 +10,15 @@ import { DT, type Kart, Phase, type World } from "./world.ts";
  */
 export const botInput = (world: World, kart: Kart, out: Input, skillOverride?: number): Input => {
   let skill = skillOverride ?? kart.botSkill;
+  let easing = false;
   // Bots well ahead of every human ease off, so races against bots stay winnable.
   if (skillOverride === undefined && kart.bot) {
     let bestHuman = -Infinity;
     for (const k of world.karts) if (!k.bot) bestHuman = Math.max(bestHuman, k.dist);
-    if (bestHuman > -Infinity && kart.dist - bestHuman > 60) skill *= 0.9;
+    if (bestHuman > -Infinity && kart.dist - bestHuman > 60) {
+      skill *= 0.9;
+      easing = true;
+    }
   }
   const track = world.track;
   if (world.phase === Phase.Countdown) {
@@ -69,6 +73,12 @@ export const botInput = (world: World, kart: Kart, out: Input, skillOverride?: n
   }
   if (speed > cornerLimit * 1.2 && !kart.drifting && !backwards) bits = InputBit.Brake;
   if (speed > kart.maxSpeed * skill && kart.boostT <= 0) bits &= ~InputBit.Throttle;
+
+  // Nitro on straights; keep burning once lit, and never sit on a full meter.
+  if (!kart.finished && !easing && !backwards && !(bits & InputBit.Brake) && kart.nitro > 0) {
+    const straight = cornerLimit > kart.maxSpeed * 1.35;
+    if ((straight && (kart.nitroLit || kart.nitro > 0.5)) || kart.nitro > 0.97) bits |= InputBit.Nitro;
+  }
 
   if (kart.item !== ItemKind.None && !kart.finished) {
     kart.botItemDelay -= DT;

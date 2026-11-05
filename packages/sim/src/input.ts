@@ -4,6 +4,7 @@ export const InputBit = {
   Drift: 4,
   Item: 8,
   Back: 16,
+  Nitro: 32,
 } as const;
 
 export interface Input {
