@@ -1,7 +1,10 @@
-import { FeatureKind, type Pose, type Track, type TrackTheme, makePose, poseAt } from "@dario-kart/sim";
+import { BoostKind, FeatureKind, TOKEN_MAXING_SCALE, TOKEN_MAXING_SECONDS, type Pose, type Track, type TrackTheme, makePose, poseAt } from "@dario-kart/sim";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { type Part, buildDriver, kartGeometry, partMaterial } from "./kart-model.ts";
+import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
+import { jetGeometry, jetMaterial, pickupRingMaterial } from "./effect-materials.ts";
+import { type Part, kartGeometry, partMaterial } from "./kart-model.ts";
+import { DriverVisual } from "./driver-model.ts";
 import { THEME_LOOKS, type PlacedBuilding, themeDecor } from "./landmarks.ts";
 
 const pose = makePose();
@@ -296,7 +299,7 @@ export interface TrackScene {
   readonly group: THREE.Group;
   update(time: number, boxesReady: Uint8Array | null, coinsReady: Uint8Array | null, kartNear: (s: number, d: number) => boolean): void;
   /** Called when a box or GPU someone just took disappears, with where it was. */
-  onPickup: ((kind: "box" | "gpu", at: THREE.Vector3) => void) | null;
+  onPickup: ((kind: "box" | "gpu", at: THREE.Vector3, up: THREE.Vector3) => void) | null;
   dispose(): void;
 }
 
@@ -488,10 +491,20 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
   // Item boxes: solid, bright, a "?" on every face, so a row reads from far down the road.
   const boxTex = keep(itemBoxTexture(false));
   const boxGlow = keep(itemBoxTexture(true));
-  const boxGeo = keep(new THREE.BoxGeometry(2, 2, 2));
-  const boxMat = keep(new THREE.MeshStandardMaterial({
-    color: 0xffffff, map: boxTex, emissive: 0xffffff, emissiveMap: boxGlow, emissiveIntensity: 0.9, roughness: 0.4, metalness: 0.05,
+  const boxGeo = keep(new RoundedBoxGeometry(2, 2, 2, 3, .18));
+  const boxMat = keep(new THREE.MeshPhysicalMaterial({
+    color: 0xffffff, map: boxTex, emissive: 0xffffff, emissiveMap: boxGlow, emissiveIntensity: .5,
+    roughness: .26, metalness: .12, clearcoat: 1, clearcoatRoughness: .12,
   }));
+  const boxTime = { value: 0 };
+  boxMat.onBeforeCompile = (shader) => {
+    shader.uniforms.uBoxTime = boxTime;
+    shader.vertexShader = `varying vec3 vBoxPosition;\n${shader.vertexShader}`.replace("#include <begin_vertex>", "#include <begin_vertex>\nvBoxPosition = position;");
+    shader.fragmentShader = `varying vec3 vBoxPosition;\nuniform float uBoxTime;\n${shader.fragmentShader}`.replace(
+      "#include <emissivemap_fragment>",
+      "#include <emissivemap_fragment>\nfloat scan = pow(.5 + .5 * sin(vBoxPosition.y * 5. - uBoxTime * 3.), 14.);\ntotalEmissiveRadiance += vec3(.14, .35, .55) * scan;",
+    );
+  };
   const boxes = new THREE.InstancedMesh(boxGeo, boxMat, Math.max(1, track.itemBoxes.length));
   boxes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   const boxBase = track.itemBoxes.map((b) => trackPoint(track, b.s, b.d, 1.5, new THREE.Vector3()));
@@ -503,10 +516,8 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
   track.itemBoxes.forEach((_, i) => boxes.setColorAt(i, boxColor.setHSL((i * 0.13) % 1, 1, 0.5)));
   group.add(boxes);
   // A glowing ring on the road under each box.
-  const boxRingMat = keep(new THREE.MeshBasicMaterial({
-    color: 0xffc93c, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
-  }));
-  const rings = new THREE.InstancedMesh(keep(new THREE.RingGeometry(1.1, 1.6, 24)), boxRingMat, Math.max(1, track.itemBoxes.length));
+  const boxRingMat = keep(pickupRingMaterial());
+  const rings = new THREE.InstancedMesh(keep(new THREE.PlaneGeometry(3.8, 3.8)), boxRingMat, Math.max(1, track.itemBoxes.length));
   rings.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   const ringPose = track.itemBoxes.map((b) => {
     const at = trackPoint(track, b.s, b.d, 0.08, new THREE.Vector3());
@@ -521,9 +532,13 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
   const coinMat = keep(new THREE.MeshStandardMaterial({
     color: 0xffffff, map: gpuTex, emissive: 0x76b900, emissiveMap: gpuTex, emissiveIntensity: 0.8, metalness: 0.3, roughness: 0.35,
   }));
-  const coins = new THREE.InstancedMesh(keep(new THREE.BoxGeometry(1.7, 0.28, 1.06)), coinMat, Math.max(1, track.coins.length));
+  const coins = new THREE.InstancedMesh(keep(new RoundedBoxGeometry(1.7, .28, 1.06, 2, .10)), coinMat, Math.max(1, track.coins.length));
   coins.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   const coinBase = track.coins.map((c) => trackPoint(track, c.s, c.d, c.h, new THREE.Vector3()));
+  const coinUp = track.coins.map((c) => {
+    poseAt(track, c.s, c.d, 0, pose);
+    return new THREE.Vector3(pose.ux, pose.uy, pose.uz);
+  });
   group.add(coins);
 
   const decor = themeDecor(track, theme);
@@ -608,9 +623,11 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
     group,
     onPickup: null,
     update(time, boxesReady, coinsReady, kartNear) {
+      boxTime.value = time;
+      boxRingMat.uniforms.uTime.value = time;
       for (let i = 0; i < coinBase.length; i++) {
         const ready = coinsReady ? coinsReady[i] === 1 : true;
-        if (!ready && coinWas[i]) result.onPickup?.("gpu", coinBase[i]);
+        if (!ready && coinWas[i]) result.onPickup?.("gpu", coinBase[i], coinUp[i]);
         coinWas[i] = ready ? 1 : 0;
         tmp.position.copy(coinBase[i]);
         tmp.position.y += Math.sin(time * 3 + i * 0.7) * 0.2;
@@ -624,7 +641,7 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
       slowTex.offset.y = time * 1.2;
       for (let i = 0; i < boxBase.length; i++) {
         const ready = boxesReady ? boxesReady[i] === 1 : true;
-        if (!ready && boxWas[i]) result.onPickup?.("box", boxBase[i]);
+        if (!ready && boxWas[i]) result.onPickup?.("box", boxBase[i], boxUp[i]);
         boxWas[i] = ready ? 1 : 0;
         tmp.position.copy(boxBase[i]).addScaledVector(boxUp[i], Math.sin(time * 2 + i) * 0.25);
         tmp.rotation.set(time * 0.7 + i, time * 1.1 + i, 0);
@@ -661,13 +678,26 @@ export const buildTrackScene = (track: Track, theme: TrackTheme, scene: THREE.Sc
 
 /* ---------------- karts ---------------- */
 
-const fx = {
-  flame: new THREE.ConeGeometry(0.42, 1.8, 12).rotateX(-Math.PI / 2),
-  spark: new THREE.SphereGeometry(0.17, 6, 4),
-  smoke: new THREE.SphereGeometry(0.45, 8, 6),
-};
-const flameMat = new THREE.MeshBasicMaterial({ color: 0x3de0ff, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
-const smokeMat = new THREE.MeshBasicMaterial({ color: 0x2a2a2e, transparent: true, opacity: 0.55, depthWrite: false });
+const fx = { spark: new THREE.SphereGeometry(.13, 10, 8) };
+const hitMaterial = new THREE.MeshBasicMaterial({ color: 0xfff1ca });
+const starShape = new THREE.Shape();
+for (let i = 0; i < 10; i++) {
+  const a = i / 10 * Math.PI * 2 + Math.PI / 2, r = i % 2 ? .085 : .20;
+  if (i === 0) starShape.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+  else starShape.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+}
+starShape.closePath();
+const starBase = new THREE.ExtrudeGeometry(starShape, { depth: .04, bevelEnabled: true, bevelSize: .012, bevelThickness: .01, bevelSegments: 1 });
+const starParts = Array.from({ length: 3 }, (_, i) => {
+  const a = i / 3 * Math.PI * 2;
+  return starBase.clone().rotateY(a).translate(Math.cos(a) * .72, 0, Math.sin(a) * .72);
+});
+const starGeometry = mergeGeometries(starParts, false);
+starBase.dispose();
+for (const g of starParts) g.dispose();
+const starMaterial = new THREE.MeshBasicMaterial({ color: 0xffdf62, side: THREE.DoubleSide });
+const tokenHaloGeometry = new THREE.TorusGeometry(1.5, .045, 6, 48).rotateX(Math.PI / 2);
+const tokenHaloMaterial = new THREE.MeshBasicMaterial({ color: 0xffd56a, transparent: true, opacity: .72, depthWrite: false });
 /** Drift spark colors by charge: building, mini boost ready, super boost ready. */
 export const SPARK_COLORS = [0xd7dce6, 0x3de0ff, 0xff3d7f, 0xb18cff];
 const sparkMats = SPARK_COLORS.map((c) => new THREE.MeshBasicMaterial({ color: c }));
@@ -701,7 +731,11 @@ export interface KartLook {
 export interface KartFx {
   speed: number;
   boostT: number;
+  boostKind: number;
+  nitro: boolean;
   stunT: number;
+  giantT: number;
+  squashT: number;
   drifting: number;
   driftCharge: number;
   trickT: number;
@@ -718,8 +752,9 @@ export const buildKartBody = (look: Pick<KartLook, "kart" | "character" | "prima
     const mat = part === "glow" ? glow : partMaterial(part as Part, look.primary, look.secondary);
     body.add(new THREE.Mesh(geo, mat));
   }
-  body.add(buildDriver(look.character));
-  return { body, glow };
+  const driver = new DriverVisual(look.character);
+  body.add(driver.root);
+  return { body, glow, driver };
 };
 
 /** Visual for one racer. */
@@ -727,19 +762,31 @@ export class KartVisual {
   readonly root = new THREE.Group();
   readonly body: THREE.Group;
   private readonly glow: THREE.MeshBasicMaterial;
-  private readonly flame: THREE.Mesh;
+  private readonly driver: DriverVisual;
+  private readonly flame: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
   private readonly sparks: THREE.Mesh[] = [];
-  private readonly smoke: THREE.Mesh;
+  private readonly stars = new THREE.Mesh(starGeometry, starMaterial);
+  private readonly tokenHalo = new THREE.Mesh(tokenHaloGeometry, tokenHaloMaterial);
+  private readonly surfaces: Array<{ mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] }> = [];
+  private hitAt = -100;
+  private quietHit = false;
+  private flashing = false;
   private readonly label: THREE.Sprite;
 
   constructor(look: KartLook) {
     const built = buildKartBody(look);
     this.body = built.body;
     this.glow = built.glow;
+    this.driver = built.driver;
     this.root.add(this.body);
+    this.body.traverse((part) => {
+      if (part instanceof THREE.Mesh) this.surfaces.push({ mesh: part, material: part.material });
+    });
 
-    this.flame = new THREE.Mesh(fx.flame, flameMat);
-    this.flame.position.set(0, 0.55, -2.4);
+    this.flame = new THREE.Mesh(jetGeometry, jetMaterial(0x3de0ff));
+    const exhaust = kartGeometry(look.kart).get("glow")!;
+    if (!exhaust.boundingBox) exhaust.computeBoundingBox();
+    this.flame.position.set(0, .5, exhaust.boundingBox!.min.z);
     this.body.add(this.flame);
     for (const x of [-0.95, 0.95]) {
       const spark = new THREE.Mesh(fx.spark, sparkMats[0]);
@@ -748,27 +795,55 @@ export class KartVisual {
       this.body.add(spark);
       this.sparks.push(spark);
     }
-    this.smoke = new THREE.Mesh(fx.smoke, smokeMat);
-    this.smoke.position.set(0, 0.8, -2);
-    this.smoke.visible = false;
-    this.body.add(this.smoke);
+    this.stars.position.y = 2.65;
+    this.stars.visible = false;
+    this.root.add(this.stars);
+    this.tokenHalo.position.y = .12;
+    this.tokenHalo.visible = false;
+    this.root.add(this.tokenHalo);
 
     this.label = labelSprite(look.me ? "You" : look.name, look.me);
     this.root.add(this.label);
   }
 
+  hit(time: number, reducedMotion: boolean): void {
+    this.hitAt = time;
+    this.quietHit = reducedMotion;
+  }
+
   apply(state: KartFx): void {
-    this.flame.visible = state.boostT > 0;
-    if (this.flame.visible) this.flame.scale.set(1, 1, 0.8 + Math.sin(state.time * 40) * 0.25);
-    this.body.rotation.y = state.stunT > 0 ? state.time * 14 : -state.slip * 0.35;
-    this.body.rotation.z = state.stunT > 0 ? 0 : state.slip * 0.2;
+    const giantT = state.giantT ?? 0, squashT = state.squashT ?? 0;
+    const grown = THREE.MathUtils.smoothstep(Math.min((TOKEN_MAXING_SECONDS - giantT) / .22, giantT / .3), 0, 1);
+    const size = 1 + (TOKEN_MAXING_SCALE - 1) * grown;
+    const flat = Math.min(1, squashT / .18);
+    this.body.scale.set(size * (1 + flat * .28), size * (1 - flat * .82), size * (1 + flat * .18));
+    this.tokenHalo.visible = giantT > 0;
+    this.tokenHalo.scale.setScalar(size * (1 + Math.sin(state.time * 4) * .025));
+    this.label.position.y = squashT > 0 ? 1.5 : 3.1 * size;
+    this.driver.animate(state.time, state.slip, state.speed, state.stunT > 0);
+    const age = state.time - this.hitAt;
+    const flashing = !this.quietHit && age >= 0 && age < .065;
+    if (flashing !== this.flashing) {
+      for (const part of this.surfaces) part.mesh.material = flashing ? hitMaterial : part.material;
+      this.flashing = flashing;
+    }
+    this.body.position.y = squashT <= 0 && !this.quietHit && age >= 0 && age < .32 ? Math.sin(age / .32 * Math.PI) * .15 : 0;
+    this.flame.visible = squashT <= 0 && state.boostT > 0;
+    if (this.flame.visible) {
+      this.flame.material.uniforms.uTime.value = state.time;
+      this.flame.material.uniforms.uColor.value.setHex(state.boostKind === BoostKind.UltraDrift ? 0xb98aff : state.nitro ? 0x75f3ff : 0x3de0ff);
+      this.flame.scale.set(state.nitro ? 1.25 : 1, state.nitro ? 1.25 : 1, 1.1 + Math.sin(state.time * 40) * .16);
+    }
+    this.body.rotation.y = squashT > 0 ? 0 : state.stunT > 0 ? state.time * 14 : -state.slip * 0.35;
+    this.body.rotation.z = squashT > 0 || state.stunT > 0 ? 0 : state.slip * 0.2;
     // Trick: a full barrel roll while airborne.
     this.body.rotation.x = 0;
-    if (state.trickT > 0) this.body.rotation.z = (1 - state.trickT / 0.45) * Math.PI * 2;
+    if (squashT <= 0 && state.trickT > 0) this.body.rotation.z = (1 - state.trickT / 0.45) * Math.PI * 2;
 
     this.glow.color.setHex(state.boostT > 0 ? 0xffffff : 0x3de0ff);
-    this.smoke.visible = state.stunT > 0;
-    if (this.smoke.visible) this.smoke.scale.setScalar(1 + Math.sin(state.time * 20) * 0.3);
+    this.stars.visible = state.stunT > 0 || squashT > 0;
+    this.stars.rotation.y = state.time * 3.5;
+    this.stars.position.y = (squashT > 0 ? .9 : 2.65 * size) + Math.sin(state.time * 5) * .08;
 
     const charge = state.driftCharge;
     const tier = charge >= 2.3 ? 3 : charge >= 1.4 ? 2 : charge >= 0.7 ? 1 : 0;
@@ -784,16 +859,11 @@ export class KartVisual {
     (this.label.material as THREE.SpriteMaterial).map?.dispose();
     this.label.material.dispose();
     this.glow.dispose();
+    this.flame.material.dispose();
   }
 }
 
 /* ---------------- projectiles ---------------- */
-
-export const makeMissileMesh = (): THREE.Mesh =>
-  new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.32, 1.3, 4, 10).rotateX(Math.PI / 2),
-    new THREE.MeshStandardMaterial({ color: 0xff3d7f, emissive: 0xff3d7f, emissiveIntensity: 0.8 }),
-  );
 
 /** Speech bubble for emotes, floating above a kart. */
 export const makeBubble = (text: string, accent: number): THREE.Sprite => {

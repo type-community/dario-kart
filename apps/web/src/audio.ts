@@ -34,6 +34,7 @@ export class Sound {
   private tempo = 128;
   private key = 0;
   private intense = false;
+  private lastImpact = -1;
   muted = localStorage.getItem("dk.muted") === "1";
 
   constructor() {
@@ -193,17 +194,41 @@ export class Sound {
   }
 
   fire(): void {
-    this.burst(0.25, 2500, { sweep: 400, gain: 0.14 });
+    this.burst(.20, 1000, { sweep: 4800, gain: .2, q: .6 });
+    this.tone(520, .16, { type: "triangle", slide: 130, gain: .13 });
   }
 
-  hit(): void {
-    this.tone(110, 0.25, { type: "sine", slide: 45, gain: 0.3 });
-    this.burst(0.25, 900, { gain: 0.15, sweep: 200, type: "lowpass" });
+  hit(strength = 1): void {
+    const ctx = this.ensure();
+    if (!ctx || (strength < .7 && ctx.currentTime - this.lastImpact < .07)) return;
+    this.lastImpact = ctx.currentTime;
+    this.tone(155, .28, { type: "sine", slide: 42, gain: .42 * strength });
+    this.burst(.09, 2400, { gain: .32 * strength, sweep: 700, q: .7 });
+    this.burst(.35, 650, { gain: .26 * strength, sweep: 90, type: "lowpass" });
+    this.tone(390, .14, { type: "triangle", slide: 115, gain: .10 * strength, delay: .025 });
+    if (strength > .7) {
+      this.music.gain.cancelScheduledValues(ctx.currentTime);
+      this.music.gain.setValueAtTime(.14, ctx.currentTime);
+      this.music.gain.linearRampToValueAtTime(.3, ctx.currentTime + .3);
+    }
   }
 
   trick(): void {
     this.tone(midi(76), 0.07, { type: "sine", gain: 0.1 });
     this.tone(midi(83), 0.1, { type: "sine", gain: 0.1, delay: 0.06 });
+  }
+
+  maxing(): void {
+    this.burst(.4, 250, { sweep: 2400, gain: .18, q: .6 });
+    for (const [i, note] of [55, 62, 67, 74].entries()) {
+      this.tone(midi(note), .22, { type: "triangle", gain: .18, delay: i * .065 });
+    }
+  }
+
+  squash(strength = 1): void {
+    this.tone(230, .3, { type: "triangle", slide: 48, gain: .32 * strength });
+    this.tone(95, .2, { type: "sine", slide: 35, gain: .4 * strength });
+    this.burst(.13, 350, { gain: .22 * strength, type: "lowpass" });
   }
 
   bump(): void {

@@ -7,8 +7,8 @@ export default Alchemy.Stack(
   "DarioKart",
   {
     providers: Cloudflare.providers(),
-    // Shared deploy state in the Cloudflare account, so CI and laptops agree on what exists.
-    state: Cloudflare.state(),
+    // Keep local dev offline; share deployed state across CI and laptops.
+    state: process.env.ALCHEMY_DEV === "true" ? Alchemy.localState() : Cloudflare.state(),
   },
   Effect.gen(function* () {
     const game = yield* Game;

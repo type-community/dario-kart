@@ -1,12 +1,15 @@
 import {
-  BoostKind, DRIFT_TIER1, DRIFT_TIER2, DRIFT_TIER3, MAX_GPUS, NITRO_MIN, SlowFlag, ItemKind, type Track,
+  BoostKind, DRIFT_TIER1, DRIFT_TIER2, DRIFT_TIER3, ITEM_NAMES, MAX_GPUS, NITRO_MIN, SlowFlag, ItemKind, type Track,
 } from "@dario-kart/sim";
+import { MISSILE_ICON, TOKEN_MAXING_ICON } from "./item-model.ts";
 
 const GLYPHS: Record<number, string> = {
-  [ItemKind.Missile]: "🚀",
+  [ItemKind.Missile]: MISSILE_ICON,
+  [ItemKind.TokenMaxing]: TOKEN_MAXING_ICON,
 };
 
 const SLOW_CAUSES = [
+  { flag: SlowFlag.Squashed, icon: "🥞", title: "Squished!", body: "Flattened! You'll pop back up in a moment" },
   { flag: SlowFlag.Hit, icon: "💥", title: "Hit!", body: "Spun out. You'll recover in a moment" },
   { flag: SlowFlag.SlowZone, icon: "⛔", title: "Slow zone", body: "Stay off the red stripes" },
   { flag: SlowFlag.Wall, icon: "🧱", title: "Hit the wall", body: "Glance off walls instead of hitting them head on" },
@@ -34,6 +37,7 @@ export interface HudState {
   item2: number;
   item2Count: number;
   twin: boolean;
+  giantT: number;
   countdown: number;
   racing: boolean;
   status: string;
@@ -106,7 +110,9 @@ export class Hud {
         <div class="item-slot" data-k="slot1"><span class="glyph" data-k="glyph1"></span><span class="count" data-k="count1"></span></div>
         <div class="item-slot second" data-k="slot2" hidden><span class="glyph" data-k="glyph2"></span><span class="count" data-k="count2"></span></div>
         <kbd class="item-key">E</kbd>
+        <span class="item-name" data-k="itemName"></span>
       </div>
+      <div class="hud-maxing" data-k="maxing" hidden><strong>Token Maxing</strong><b data-k="maxingTime"></b><small>Run over rivals!</small></div>
       <canvas class="hud-map" width="380" height="380"></canvas>
       <div class="hud-feed" data-k="feed" aria-live="polite"></div>
       <div class="hud-status" data-k="status"></div>
@@ -214,10 +220,11 @@ export class Hud {
     this.mapTrack = canvas;
   }
 
-  private set(key: string, value: string): void {
+  private set(key: string, value: string, icon = false): void {
     if (this.last[key] === value) return;
     this.last[key] = value;
-    this.el[key].textContent = value;
+    if (icon) this.el[key].innerHTML = value;
+    else this.el[key].textContent = value;
   }
 
   private bannerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -276,7 +283,10 @@ export class Hud {
     this.set("speed", String(Math.round(Math.abs(s.speed) * 3.6)));
     this.el.speed.classList.toggle("boosting", s.boosting);
 
-    this.set("glyph1", GLYPHS[s.item] ?? "");
+    this.set("glyph1", GLYPHS[s.item] ?? "", true);
+    this.set("itemName", ITEM_NAMES[s.item] ?? "");
+    this.el.slot1.title = ITEM_NAMES[s.item] ?? "";
+    this.el.slot2.title = ITEM_NAMES[s.item2] ?? "";
     this.set("count1", s.itemCount > 1 ? `×${s.itemCount}` : "");
     if (s.item !== ItemKind.None && this.lastItem === ItemKind.None && !s.spectating) {
       this.el.slot1.classList.remove("landed");
@@ -286,11 +296,13 @@ export class Hud {
     this.lastItem = s.item;
     this.el.slot1.classList.toggle("full", s.item !== ItemKind.None);
     this.el.slot2.hidden = !s.twin;
-    this.set("glyph2", GLYPHS[s.item2] ?? "");
+    this.set("glyph2", GLYPHS[s.item2] ?? "", true);
     this.set("count2", s.item2Count > 1 ? `×${s.item2Count}` : "");
     // Nothing to show until you're holding something.
     this.el.items.hidden = s.spectating || s.item === ItemKind.None;
     this.el.spectate.hidden = !s.spectating;
+    this.el.maxing.hidden = s.spectating || s.giantT <= 0;
+    if (s.giantT > 0) this.set("maxingTime", `${s.giantT.toFixed(1)}s`);
 
     // Drift meter: shows exactly when a boost is banked.
     this.el.drift.hidden = !s.drifting || s.spectating;

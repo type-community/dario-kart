@@ -24,7 +24,7 @@ Controls: `W A S D` or arrow keys to drive, `Space` to drift (sparks go blue, th
 - **Drift tiers:** sparks go white, blue, pink, purple. Release for a mini, super or ULTRA boost.
 - **Drift chains:** start your next drift within 2 seconds of a drift boost and the chain grows, up to ×4. Each link makes the boost 12% longer and fills the meter faster. A hard wall hit, a missile or waiting too long breaks it. A drift too short to pay out doesn't count either way.
 - **Tricks:** tap `Space` in the air off any ramp, crest or bumper, then land it for a boost.
-- **Items:** item boxes give an Outage Missile (`E` fires ahead, `Q` behind). Boosts come from your meter, not from boxes.
+- **Items:** item boxes give an Outage Missile (`E` fires ahead, `Q` behind) or **Token Maxing** (`E` to activate). Token Maxing makes your kart 1.85× bigger with 10% more top speed and acceleration for 8 seconds: run over smaller racers to flatten and stop them for 1.2 seconds. They get 1 second of protection after recovering; giants cannot squash each other. Its speed bonus stacks with boosts within the usual speed cap.
 - **Slipstream:** tuck in behind a rival and you get towed along (up to +5% top speed) while your meter fills.
 - **GPUs:** green chips on risky lines (loops, ramp arcs, banked walls). Each adds 1% top speed, up to 10; hits make you drop 3.
 - **Gentle catch-up:** far behind the leader you get up to +5% top speed, and slipstream naturally helps whoever is behind.
@@ -91,7 +91,7 @@ alchemy.run.ts    the whole stack: game Worker + Vite site
 - The server is authoritative. Clients predict their own kart, replay unacknowledged inputs on each snapshot, and render other karts about 115 ms in the past.
 - Races are 2 laps and about 50 seconds. Tracks get a little longer and wider with more racers (about 1.3 km for 8 players, 1.6 km for 30, 2.1 km for 100).
 - Each city drives and looks different. The sim side is `mix` in `THEMES` (`content.ts`): SF is all jumps over big hills, NYC is flat with hard 90s, slow zones and boost lanes, The Fab is boost pads and pinball bumpers, Shenzhen is neon switchbacks with two loops, and Beijing is a wide, smooth ring road with almost no gimmicks, so it's about slipstreaming. The look (time of day, how buildings crowd the road, landmarks like the SF bridge, Broadway billboards, the Fab's ceiling and wafers, Shenzhen's supertall, Beijing's gates and pagodas) is in `apps/web/src/landmarks.ts`.
-- Item boxes only hold Outage Missiles. Speed comes from the boost meter, which you earn by driving well, so boosts reward skill rather than luck.
+- Item boxes hold Outage Missiles (two-thirds chance) or Token Maxing (one-third chance). The boost meter rewards driving well; Token Maxing also gives a modest 10% speed bonus while active. Giant size, squash recovery and its grace period are replicated with kart state for online play.
 - Accounts are ephemeral: a random id and your picks live in `localStorage`.
 
 ## Deploying
