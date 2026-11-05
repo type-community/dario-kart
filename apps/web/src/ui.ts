@@ -84,6 +84,21 @@ const nameForm = (name: string, saved: boolean) => {
   </form>`;
 };
 
+const howTo = `
+  <section class="how-to" aria-labelledby="how-to-heading">
+    <h2 id="how-to-heading">How to race</h2>
+    <ul>
+      <li><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><p>Drive, steer and brake. Arrow keys work too</p></li>
+      <li><span><kbd>Space</kbd></span><p>Hold in a turn to drift, let go to boost. Chain them</p></li>
+      <li><span><kbd>Shift</kbd></span><p>Nitro. Fill it by drifting, slipstreaming, close passes, tricks</p></li>
+      <li><span><kbd>E</kbd></span><p>Fire a missile from a box. Hold <kbd>Q</kbd> to fire backward</p></li>
+      <li><span><kbd>W</kbd> on 2</span><p>Rocket start off the line</p></li>
+      <li><span><kbd>Space</kbd> in air</span><p>Trick, then land it for a boost</p></li>
+    </ul>
+    <p class="pad">Gamepad: RT drive, RB drift, A nitro, LB fire. Green GPUs add top speed; hits knock them loose.</p>
+  </section>
+`;
+
 const driverPicker = (profile: Profile) => `
   <div class="drivers" role="group" aria-label="Driver">
     ${CHARACTERS.map((c) => `
@@ -171,6 +186,7 @@ export const lobbyView = (lobby: LobbyState, profile: Profile, nameSaved = false
         ${driverPicker(profile)}
         <h2>Kart</h2>
         ${kartPicker(profile)}
+        ${howTo}
       </section>
       <aside class="lobby-col race-setup">
         <h2>Starting grid <small>${total} racers</small></h2>
@@ -210,7 +226,7 @@ const ordinal = (n: number) => {
 };
 
 const formatTime = (t: number | null) => {
-  if (t === null) return "Did not finish";
+  if (t === null) return "";
   const racing = Math.max(0, t - 3);
   const m = Math.floor(racing / 60);
   return `${m}:${(racing - m * 60).toFixed(2).padStart(5, "0")}`;
@@ -220,6 +236,19 @@ export const resultsView = (results: ReadonlyArray<RaceResult>, mySlot: number, 
   const mine = results.findIndex((r) => r.slot === mySlot);
   const title = mine >= 0 ? `${ordinal(mine + 1)} place` : "Race over";
   const podium = [1, 0, 2].map((i) => results[i]).filter(Boolean);
+  // Always list yourself, even from the back of a 100-kart field.
+  const shown = results.slice(0, 20).map((r, i) => ({ r, place: i + 1 }));
+  if (mine >= 20) shown.push({ r: results[mine], place: mine + 1 });
+  const row = ({ r, place }: { r: RaceResult; place: number }) => {
+    const me = r.slot === mySlot;
+    return `
+            <tr class="${me ? "me" : ""}${place === mine + 1 && mine >= 20 ? " gap" : ""}">
+              <td class="place">${place}</td>
+              <td class="who">${avatarSvg(r.character, 30, false)}<span>${esc(r.name)}${me ? " <em>You</em>" : ""}</span></td>
+              <td>${kartById(r.kart).name}</td>
+              <td class="time">${formatTime(r.time)}</td>
+            </tr>`;
+  };
   return `
   <section class="results">
     <div class="results-panel">
@@ -227,18 +256,12 @@ export const resultsView = (results: ReadonlyArray<RaceResult>, mySlot: number, 
       <div class="podium" aria-hidden="true">
         ${podium.map((r) => {
           const place = results.indexOf(r) + 1;
-          return `<div class="step p${place}">${avatarSvg(r.character, place === 1 ? 92 : 72)}<strong>${esc(r.slot === mySlot ? "You" : r.name)}</strong><span>${place}</span></div>`;
+          return `<div class="step p${place}${r.slot === mySlot ? " me" : ""}">${avatarSvg(r.character, place === 1 ? 92 : 72)}<strong>${esc(r.slot === mySlot ? "You" : r.name)}</strong><span>${place}</span></div>`;
         }).join("")}
       </div>
       <table>
         <tbody>
-          ${results.slice(0, 20).map((r, i) => `
-            <tr class="${r.slot === mySlot ? "me" : ""}">
-              <td class="place">${i + 1}</td>
-              <td class="who">${avatarSvg(r.character, 30, false)}<span>${esc(r.slot === mySlot ? "You" : r.name)}</span></td>
-              <td>${kartById(r.kart).name}</td>
-              <td class="time">${formatTime(r.time)}</td>
-            </tr>`).join("")}
+          ${shown.map(row).join("")}
         </tbody>
       </table>
       ${practice

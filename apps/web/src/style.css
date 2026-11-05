@@ -269,7 +269,29 @@ button {
 }
 
 .results tr.me td {
+  color: var(--asphalt-deep);
+  background: var(--hazard);
+  font-weight: 700;
+}
+
+.results tr.me td.place {
+  box-shadow: inset 0.35rem 0 0 var(--signal);
+}
+
+.results tr.me em {
+  font-style: normal;
+  font-size: var(--step--1);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.35rem;
+  background: var(--asphalt-deep);
   color: var(--hazard);
+}
+
+.results tr.gap td {
+  border-top: 2px dashed var(--asphalt-line);
 }
 
 .results td.time {
@@ -1045,6 +1067,16 @@ button {
   background: var(--wafer-dim);
 }
 
+.podium .step.me strong {
+  color: var(--hazard);
+}
+
+.podium .step.me .avatar {
+  outline: 4px solid var(--hazard);
+  outline-offset: 3px;
+  border-radius: 50%;
+}
+
 .podium .p1 span {
   height: 6.5rem;
   background: var(--hazard);
@@ -1186,6 +1218,63 @@ button {
   font-size: var(--step--1);
   color: var(--wafer-dim);
   margin-left: 0.4rem;
+}
+
+/* How to race */
+
+.how-to {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: auto;
+  padding-top: 0.6rem;
+  border-top: 2px solid var(--asphalt-line);
+}
+
+.how-to ul {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--step--1);
+  line-height: 1.3;
+}
+
+.how-to li {
+  display: grid;
+  grid-template-columns: 6.5rem 1fr;
+  gap: 0.6rem;
+  align-items: baseline;
+}
+
+.how-to li p {
+  margin: 0;
+}
+
+.how-to li > span {
+  display: flex;
+  gap: 0.15rem;
+  align-items: center;
+  font-weight: 700;
+  color: var(--hazard);
+}
+
+.how-to kbd {
+  display: inline-block;
+  min-width: 1.35rem;
+  padding: 0 0.3rem;
+  border: 1px solid var(--asphalt-line);
+  border-bottom-width: 2px;
+  background: var(--asphalt-deep);
+  color: var(--wafer);
+  font: 700 0.75rem/1.35 var(--body);
+  text-align: center;
+}
+
+.how-to .pad {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--wafer-dim);
 }
 
 /* Your name */
@@ -1750,9 +1839,12 @@ button {
 }
 
 .results td.who {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
+  white-space: nowrap;
+}
+
+.results td.who .avatar {
+  vertical-align: middle;
+  margin-right: 0.6rem;
 }
 
 .notice {
