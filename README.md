@@ -15,12 +15,12 @@ bun run dev        # alchemy dev: game Worker + Durable Objects in workerd, Vite
 - **Practice against bots** runs the whole simulation in your browser, with no server.
 - Handy URL flags: `?practice&track=nyc`, `?practice&autopilot` (bot drives you), `?race=CODE&name=You`.
 
-Controls: `W A S D` or arrow keys to drive, `Space` to drift (sparks go blue, then pink; release for a boost), `Shift` or `F` to burn your Compute meter, `E` to fire a missile, `Q` (or hold `S`) to fire backward, `Esc` to pause or leave. Gamepads work too (`A` is nitro, `RT` is gas).
+Controls: `W A S D` or arrow keys to drive, `Space` to drift (sparks go blue, then pink; release for a boost), hold `Shift` or `F` to boost, `E` to fire a missile, `Q` (or hold `S`) to fire backward, `Esc` to pause or leave. Gamepads work too (`A` is nitro, `RT` is gas).
 
 ## What makes it fun
 
 - **Rocket start:** press `W` just before "Go" for a boost. Holding it the whole countdown is just a normal start.
-- **Compute meter (the nitro):** driving with style fills it: drifting, slipstreaming and close passes (overtaking within a few meters without touching). Landing a trick adds a bit too. Hold `Shift` to burn it as a boost; a full meter lasts 2.2 seconds.
+- **Boost meter (the nitro):** driving with style fills it: drifting, slipstreaming and close passes (overtaking within a few meters without touching). Landing a trick adds a bit too. Hold `Shift` to burn it as a boost; a full meter lasts 2.2 seconds.
 - **Drift tiers:** sparks go white, blue, pink, purple. Release for a mini, super or ULTRA boost.
 - **Drift chains:** start your next drift within 2 seconds of a drift boost and the chain grows, up to ×4. Each link makes the boost 12% longer and fills the meter faster. A hard wall hit, a missile or waiting too long breaks it. A drift too short to pay out doesn't count either way.
 - **Tricks:** tap `Space` in the air off any ramp, crest or bumper, then land it for a boost.
@@ -91,7 +91,7 @@ alchemy.run.ts    the whole stack: game Worker + Vite site
 - The server is authoritative. Clients predict their own kart, replay unacknowledged inputs on each snapshot, and render other karts about 115 ms in the past.
 - Races are 2 laps and about 50 seconds. Tracks get a little longer and wider with more racers (about 1.3 km for 8 players, 1.6 km for 30, 2.1 km for 100).
 - Each city drives and looks different. The sim side is `mix` in `THEMES` (`content.ts`): SF is all jumps over big hills, NYC is flat with hard 90s, slow zones and boost lanes, The Fab is boost pads and pinball bumpers, Shenzhen is neon switchbacks with two loops, and Beijing is a wide, smooth ring road with almost no gimmicks, so it's about slipstreaming. The look (time of day, how buildings crowd the road, landmarks like the SF bridge, Broadway billboards, the Fab's ceiling and wafers, Shenzhen's supertall, Beijing's gates and pagodas) is in `apps/web/src/landmarks.ts`.
-- Item boxes only hold Outage Missiles. Speed comes from the Compute meter, which you earn by driving well, so boosts reward skill rather than luck.
+- Item boxes only hold Outage Missiles. Speed comes from the boost meter, which you earn by driving well, so boosts reward skill rather than luck.
 - Accounts are ephemeral: a random id and your picks live in `localStorage`.
 
 ## Deploying

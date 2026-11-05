@@ -1,7 +1,7 @@
 import { ItemKind, KARTS, type Perk, type ThemeId } from "./content.ts";
 import { type Input, InputBit } from "./input.ts";
 import { hash01 } from "./rng.ts";
-import { FeatureKind, type Track, curvatureAt, generateTrack, gridSlot, makeSurface, surfaceAt, wrapS } from "./track.ts";
+import { type CoinDef, FeatureKind, type ItemBoxDef, type Track, curvatureAt, generateTrack, gridSlot, makeSurface, surfaceAt, wrapS } from "./track.ts";
 
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
@@ -22,6 +22,14 @@ const COIN_RESPAWN_TICKS = 10 * TICK_RATE;
 /** How close you need to pass to a GPU or an item box to grab it, in meters. Generous on purpose. */
 const GPU_REACH = 2.6;
 const BOX_REACH = 2.8;
+
+/** Whether a kart at wrapped track distance `s` grabs this GPU. Shared so clients can predict pickups. */
+export const touchesCoin = (kart: Kart, s: number, coin: CoinDef): boolean =>
+  Math.abs(s - coin.s) <= GPU_REACH && Math.abs(kart.d - coin.d) <= GPU_REACH && Math.abs(kart.z + 0.6 - coin.h) <= 2.6;
+
+/** Whether a kart at wrapped track distance `s` grabs this item box. */
+export const touchesBox = (kart: Kart, s: number, box: ItemBoxDef): boolean =>
+  Math.abs(s - box.s) <= 2.5 && Math.abs(kart.d - box.d) <= BOX_REACH && kart.z <= 3.5;
 /** Rocket start window: throttle pressed this many ticks before GO. */
 export const START_PERFECT_TICKS = 24;
 export const START_GOOD_TICKS = 54;
@@ -34,7 +42,7 @@ const comebackBonus = (world: World, kart: Kart): number => {
 };
 
 /**
- * Compute meter (the nitrous): driving with style fills it, holding Nitro
+ * Boost meter (the nitrous): driving with style fills it, holding Nitro
  * burns it as a boost. A full meter lasts this many seconds.
  */
 export const NITRO_SECONDS = 2.2;
@@ -173,7 +181,7 @@ export class Kart {
   gpus = 0;
   /** Slipstream strength, 0..1. */
   draft = 0;
-  /** Compute meter, 0..1. */
+  /** Boost meter, 0..1. */
   nitro = NITRO_START;
   /** 1 while the nitro is burning. */
   nitroLit = 0;
@@ -546,7 +554,7 @@ const damage = (world: World, kart: Kart, amount: number, by: number): void => {
   world.events.push({ type: "hit", victim: kart.slot, by });
 };
 
-/** Item boxes only hold missiles; boosts come from your Compute meter. */
+/** Item boxes only hold missiles; boosts come from your boost meter. */
 const giveItem = (world: World, kart: Kart): void => {
   const item = ItemKind.Missile;
   if (kart.item === ItemKind.None) {
@@ -629,10 +637,7 @@ const applyFeatures = (world: World, kart: Kart): void => {
   if (world.predict || kart.finished) return;
   const coins = track.coins;
   for (let i = 0; i < coins.length; i++) {
-    const coin = coins[i];
-    const ds = s - coin.s;
-    if (ds > GPU_REACH || ds < -GPU_REACH) continue;
-    if (Math.abs(kart.d - coin.d) > GPU_REACH || Math.abs(kart.z + 0.6 - coin.h) > 2.6) continue;
+    if (!touchesCoin(kart, s, coins[i])) continue;
     if (world.coinReadyTick[i] > world.tick) continue;
     world.coinReadyTick[i] = world.tick + COIN_RESPAWN_TICKS;
     if (kart.gpus < MAX_GPUS) kart.gpus++;
@@ -640,10 +645,7 @@ const applyFeatures = (world: World, kart: Kart): void => {
   }
   const boxes = track.itemBoxes;
   for (let i = 0; i < boxes.length; i++) {
-    const box = boxes[i];
-    const ds = s - box.s;
-    if (ds > 2.5 || ds < -2.5) continue;
-    if (Math.abs(kart.d - box.d) > BOX_REACH || kart.z > 3.5) continue;
+    if (!touchesBox(kart, s, boxes[i])) continue;
     if (world.boxReadyTick[i] > world.tick) continue;
     world.boxReadyTick[i] = world.tick + BOX_RESPAWN_TICKS;
     giveItem(world, kart);

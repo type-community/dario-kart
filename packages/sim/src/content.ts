@@ -65,7 +65,7 @@ export const KARTS: ReadonlyArray<KartModel> = [
     id: "gippity", name: "Gippity", color: 0x10a37f, accent: 0xffffff,
     speed: 7, handling: 7, reliability: 7, durability: 7,
     perk: "plugins", perkName: "Plugins",
-    perkText: "A full Compute meter burns 25% longer.",
+    perkText: "A full boost meter burns 25% longer.",
   },
   {
     id: "qwen", name: "Qwen", color: 0x615ced, accent: 0xffffff,
