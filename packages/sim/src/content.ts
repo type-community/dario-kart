@@ -33,6 +33,30 @@ export type Perk =
   | "tank"
   | "twin-engine";
 
+/** What kind of vehicle it is: its body on screen and its quirks in the sim. */
+export type ChassisKind = "racer" | "dragster" | "kart" | "trike" | "rally" | "monster" | "hover";
+
+export interface Chassis {
+  readonly kind: ChassisKind;
+  readonly label: string;
+  /** One line on how it drives. */
+  readonly blurb: string;
+  /** Collision radius in meters (walls and other karts). */
+  readonly radius: number;
+  /** Multiplies mass: who shoves whom when karts touch. */
+  readonly weight: number;
+  /** Multiplies how fast the tail snaps back in line after a slide. */
+  readonly grip: number;
+  /** Multiplies how fast a drift charges. */
+  readonly driftRate: number;
+  /** Multiplies the drift angle. */
+  readonly driftAngle: number;
+  /** Multiplies ramp and jump launches. */
+  readonly hop: number;
+  /** Multiplies how far walls bounce you back. */
+  readonly bounce: number;
+}
+
 export interface KartModel {
   readonly id: string;
   readonly name: string;
@@ -45,51 +69,66 @@ export interface KartModel {
   readonly perk: Perk;
   readonly perkName: string;
   readonly perkText: string;
+  readonly chassis: Chassis;
 }
 
-/** Every kart spends the same 28-point budget across its four stats. */
+const chassis = (kind: ChassisKind, label: string, blurb: string, quirks: Partial<Omit<Chassis, "kind" | "label" | "blurb">> = {}): Chassis => ({
+  kind, label, blurb, radius: 1, weight: 1, grip: 1, driftRate: 1, driftAngle: 1, hop: 1, bounce: 1, ...quirks,
+});
+
+/**
+ * Every kart spends the same 28-point budget across its four stats, but each
+ * is a different kind of machine: they should feel nothing alike.
+ */
 export const KARTS: ReadonlyArray<KartModel> = [
   {
     id: "claude", name: "Claude", color: 0xd97757, accent: 0xf5e6d8,
-    speed: 7, handling: 8, reliability: 8, durability: 5,
+    speed: 8, handling: 8, reliability: 7, durability: 5,
     perk: "constitutional", perkName: "Constitutional",
     perkText: "Slow zones and wall hits barely slow you.",
+    chassis: chassis("racer", "Open-wheel racer", "Sticks to the road. Fragile.", { radius: 0.95, weight: 0.85, grip: 1.6 }),
   },
   {
     id: "grok", name: "Grok", color: 0x111111, accent: 0xe6e6e6,
-    speed: 10, handling: 5, reliability: 4, durability: 9,
+    speed: 10, handling: 2, reliability: 7, durability: 9,
     perk: "unhinged", perkName: "Unhinged",
     perkText: "Boosts hit 3% harder.",
+    chassis: chassis("dragster", "Dragster", "Unbeatable on a straight, a barge in the bends.", { radius: 1.15, weight: 1.5, grip: 0.7, driftRate: 0.85, driftAngle: 0.8 }),
   },
   {
     id: "gippity", name: "Gippity", color: 0x10a37f, accent: 0xffffff,
     speed: 7, handling: 7, reliability: 7, durability: 7,
     perk: "plugins", perkName: "Plugins",
     perkText: "A full boost meter burns 25% longer.",
+    chassis: chassis("kart", "Go-kart", "The classic. Good at everything."),
   },
   {
     id: "qwen", name: "Qwen", color: 0x615ced, accent: 0xffffff,
     speed: 5, handling: 10, reliability: 7, durability: 6,
     perk: "open-weights", perkName: "Open Weights",
-    perkText: "Light and nimble. Recovers from stuns 35% faster.",
+    perkText: "Recovers from stuns 35% faster.",
+    chassis: chassis("trike", "Micro trike", "Tiny and twitchy. Off the line before anyone.", { radius: 0.75, weight: 0.8, grip: 1.3, driftRate: 1.35 }),
   },
   {
     id: "fable", name: "Fable", color: 0xc96442, accent: 0xffd9a8,
-    speed: 8, handling: 8, reliability: 6, durability: 6,
+    speed: 7, handling: 7, reliability: 7, durability: 7,
     perk: "storyteller", perkName: "Plot Twist",
     perkText: "Drift boosts are 50% longer.",
+    chassis: chassis("rally", "Rally hatch", "Born sideways. Drifts charge fast and swing wide.", { grip: 0.75, driftRate: 1.3, driftAngle: 1.45 }),
   },
   {
     id: "astra", name: "Astra", color: 0x34a853, accent: 0xfbbc05,
-    speed: 4, handling: 7, reliability: 7, durability: 10,
+    speed: 4, handling: 5, reliability: 9, durability: 10,
     perk: "tank", perkName: "Tank",
     perkText: "Missiles do half damage and spin you out for a quarter less time. You only drop 1 GPU when hit.",
+    chassis: chassis("monster", "Monster truck", "Shoves everyone aside. Huge air off every ramp.", { radius: 1.35, weight: 2.2, hop: 1.4, bounce: 0.6 }),
   },
   {
     id: "gemini", name: "Gemini", color: 0x4285f4, accent: 0xa142f4,
     speed: 9, handling: 6, reliability: 6, durability: 7,
     perk: "twin-engine", perkName: "Twin Engine",
     perkText: "Holds two items at once.",
+    chassis: chassis("hover", "Hovercraft", "No wheels, no grip. Glides through slides and bounces off walls.", { grip: 0.45, driftRate: 1.1, driftAngle: 1.2, bounce: 1.8, hop: 1.15 }),
   },
 ];
 

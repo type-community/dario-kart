@@ -15,21 +15,29 @@ bun run dev        # alchemy dev: game Worker + Durable Objects in workerd, Vite
 - **Practice against bots** runs the whole simulation in your browser, with no server.
 - Handy URL flags: `?practice&track=nyc`, `?practice&autopilot` (bot drives you), `?race=CODE&name=You`.
 
-Controls: `W A S D` or arrow keys to drive, `Space` to drift (sparks go blue, then pink; release for a boost), hold `Shift` or `F` to boost, `E` to fire a missile, `Q` (or hold `S`) to fire backward, `Esc` to pause or leave. Gamepads work too (`A` is nitro, `RT` is gas).
+Controls: `W A S D` or arrow keys to drive, `Space` to drift (sparks go blue, then pink; release for a boost), hold `Shift` or `F` to boost, `E` to fire a missile, `Q` (or hold `S`) to fire backward, `Esc` to pause or leave. Gamepads work too (`A` is boost, `RT` is gas).
 
 ## What makes it fun
 
+- **Seven different machines:** every kart spends the same 28 stat points, but each is its own kind of vehicle with its own quirks in the sim:
+  - Claude, an open-wheel racer: grippy and fragile.
+  - Grok, a dragster: fastest on a straight, barely turns.
+  - Gippity, a classic go-kart.
+  - Qwen, a tiny micro trike: twitchy, off the line first, easy to shove.
+  - Fable, a rally hatch: drifts charge fast and swing wide.
+  - Astra, a monster truck: shoves everyone aside, huge air off ramps.
+  - Gemini, a hovercraft: almost no grip, bounces off walls.
 - **Rocket start:** press `W` just before "Go" for a boost. Holding it the whole countdown is just a normal start.
 - **Boost meter (the nitro):** driving with style fills it: drifting, slipstreaming and close passes (overtaking within a few meters without touching). Landing a trick adds a bit too. Hold `Shift` to burn it as a boost; a full meter lasts 2.2 seconds.
 - **Drift tiers:** sparks go white, blue, pink, purple. Release for a mini, super or ULTRA boost.
 - **Drift chains:** start your next drift within 2 seconds of a drift boost and the chain grows, up to ×4. Each link makes the boost 12% longer and fills the meter faster. A hard wall hit, a missile or waiting too long breaks it. A drift too short to pay out doesn't count either way.
 - **Tricks:** tap `Space` in the air off any ramp, crest or bumper, then land it for a boost.
-- **Items:** item boxes give an Outage Missile (`E` fires ahead, `Q` behind) or **Token Maxing** (`E` to activate). Token Maxing makes your kart 1.85× bigger with 10% more top speed and acceleration for 8 seconds: run over smaller racers to flatten and stop them for 1.2 seconds. They get 1 second of protection after recovering; giants cannot squash each other. Its speed bonus stacks with boosts within the usual speed cap.
+- **Items:** item boxes give an Outage Missile (`E` fires ahead, `Q` behind) or **Token Maxing** (`E` to activate). Token Maxing makes your kart 1.85× bigger with 10% more top speed and acceleration for 8 seconds: run over smaller racers to flatten and stop them for 1.2 seconds. They get 1 second of protection after recovering; giants cannot squash each other. Its speed bonus stacks with boosts within the usual speed cap. Held missiles appear on the roof rack, and an incoming-missile warning sounds when one is closing in.
 - **Slipstream:** tuck in behind a rival and you get towed along (up to +5% top speed) while your meter fills.
 - **GPUs:** green chips on risky lines (loops, ramp arcs, banked walls). Each adds 1% top speed, up to 10; hits make you drop 3.
 - **Gentle catch-up:** far behind the leader you get up to +5% top speed, and slipstream naturally helps whoever is behind.
 - **Forgiving handling:** let go of the steering and the kart settles back in line with the road. Drifts mostly follow the road by themselves: the nose swings in, and steering tightens or widens the line. Wall scrapes cost almost nothing.
-- **Missiles:** a hit spins you out for about a second but you keep about half your speed. Missiles fly for 2.5 seconds and bounce off walls up to 3 times.
+- **Missiles:** a hit spins you out for about a second but you keep about half your speed. Missiles fly for 2.5 seconds, trailing fire and smoke, and bounce off walls up to 3 times. Hits explode with a fireball, a shockwave across the road and debris.
 - **Feel:** synthesized engine, screech, stingers and synthwave music (faster on the final lap), speed lines, a camera that pulls back and hums at top speed, wind streaks while drafting or on nitro, field-of-view kicks, particles.
 - **Moments:** final lap and lap-split banners, overtake pops, wrong-way warning, podium and confetti.
 - **Trash talk:** `1`–`4` throw your driver's lines at the lobby. `M` mutes.
@@ -81,14 +89,16 @@ apps/server       Cloudflare Worker + one Durable Object per lobby (Alchemy, Eff
   worker.ts       routes /api/race/:code to the lobby's Durable Object
 apps/web          three.js client (Vite)
   game.ts         prediction, reconciliation, interpolation, camera
-  scene.ts        track, props and kart meshes
+  scene.ts        track and props
+  kart-model.ts   the seven vehicle bodies and drivers
+  fx.ts           missiles, trails, explosions
 alchemy.run.ts    the whole stack: game Worker + Vite site
 ```
 
 - The sim runs in track space: `s` is distance along the centerline and `d` is the lateral offset. Walls are `|d| > halfWidth`, so there are no nearest-point searches. A 100-kart tick costs about 0.14 ms.
 - Every track sample carries a full 3D frame, so roads climb, crest, bank into corners and loop. The physics only needs yaw curvature, pitch curvature, slope and a loop flag; crests launch you when you're fast enough, loops hold you on.
-- Kart stats are tuned with `scripts/balance.ts` (constants in `STAT` in `world.ts`): every kart's average finish is within about 0.05 of even across hundreds of bot races.
-- The server is authoritative. Clients predict their own kart, replay unacknowledged inputs on each snapshot, and render other karts about 115 ms in the past.
+- Kart stats are tuned with `scripts/balance.ts` (constants in `STAT` in `world.ts`): every kart's average finish is within about 0.05 of even across hundreds of bot races, despite the karts driving nothing alike.
+- The server is authoritative. Clients predict their own kart (the countdown and GO included, so a stalled connection doesn't strand you on the line), rewind to the newest snapshot once a frame and replay unacknowledged inputs. Other karts are interpolated about 115 ms in the past, then carried forward along their latest motion to your kart's moment, so side by side on screen is side by side on the server.
 - Races are 2 laps and about 50 seconds. Tracks get a little longer and wider with more racers (about 1.3 km for 8 players, 1.6 km for 30, 2.1 km for 100).
 - Each city drives and looks different. The sim side is `mix` in `THEMES` (`content.ts`): SF is all jumps over big hills, NYC is flat with hard 90s, slow zones and boost lanes, The Fab is boost pads and pinball bumpers, Shenzhen is neon switchbacks with two loops, and Beijing is a wide, smooth ring road with almost no gimmicks, so it's about slipstreaming. The look (time of day, how buildings crowd the road, landmarks like the SF bridge, Broadway billboards, the Fab's ceiling and wafers, Shenzhen's supertall, Beijing's gates and pagodas) is in `apps/web/src/landmarks.ts`.
 - Item boxes hold Outage Missiles (two-thirds chance) or Token Maxing (one-third chance). The boost meter rewards driving well; Token Maxing also gives a modest 10% speed bonus while active. Giant size, squash recovery and its grace period are replicated with kart state for online play.

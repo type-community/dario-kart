@@ -640,6 +640,28 @@ button {
   line-height: 1;
 }
 
+.item-slot .glyph svg {
+  display: block;
+  width: 3.6rem;
+  height: 3.6rem;
+  filter: drop-shadow(0 0 8px rgba(255, 120, 60, 0.6));
+}
+
+.item-slot.second .glyph svg {
+  width: 2.6rem;
+  height: 2.6rem;
+}
+
+.item-slot.full {
+  animation: armed 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes armed {
+  to {
+    box-shadow: 0 0 22px rgba(255, 201, 60, 0.55);
+  }
+}
+
 .item-slot.second .glyph {
   width: 2rem;
   height: 2rem;
@@ -918,6 +940,7 @@ button {
 
 @media (prefers-reduced-motion: reduce) {
   .item-slot.landed,
+  .item-slot.full,
   .hud-callout.pop {
     animation: none;
   }
@@ -1040,6 +1063,38 @@ button {
   animation: blink 0.5s steps(2) infinite;
 }
 
+.hud-incoming {
+  position: absolute;
+  left: 50%;
+  top: 7.5rem;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.3rem 1rem 0.3rem 0.35rem;
+  background: rgba(120, 0, 24, 0.9);
+  border: 2px solid #ff4d6d;
+  box-shadow: 0 0 24px rgba(255, 45, 85, 0.6);
+  font-weight: 900;
+  font-style: italic;
+  font-size: var(--step-2);
+  color: #fff;
+  white-space: nowrap;
+  animation: blink 0.4s steps(2) infinite;
+}
+
+.hud-incoming b {
+  display: grid;
+  place-items: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  background: #ff2d55;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  font-style: normal;
+  font-size: 1rem;
+  padding-top: 0.35rem;
+}
+
 @keyframes blink {
   50% {
     opacity: 0.4;
@@ -1087,6 +1142,7 @@ button {
   .hud-banner.pop,
   .hud-placepop.pop,
   .hud-wrongway,
+  .hud-incoming,
   .hud-boost *,
   .hud-boost.denied .boost-gauge {
     animation: none !important;
@@ -1612,7 +1668,7 @@ button {
 
 .kart-row {
   display: grid;
-  grid-template-columns: 6.2rem repeat(4, minmax(2.6rem, 1fr));
+  grid-template-columns: 7.6rem repeat(4, minmax(2.6rem, 1fr));
   gap: 0.15rem 0.6rem;
   align-items: center;
   text-align: left;
@@ -1651,6 +1707,21 @@ button {
   display: flex;
   align-items: center;
   gap: 0.45rem;
+}
+
+.kart-name small {
+  display: block;
+  margin-top: 0.15rem;
+  font-family: var(--body);
+  font-style: normal;
+  font-weight: 600;
+  font-size: 0.7rem;
+  color: var(--wafer-dim);
+  white-space: nowrap;
+}
+
+.kart-row[aria-pressed="true"] .kart-name small {
+  color: var(--hazard);
 }
 
 .kart-name i {

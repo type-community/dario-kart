@@ -1,13 +1,14 @@
-import { KARTS } from "@dario-kart/sim";
+import { type ChassisKind, KARTS } from "@dario-kart/sim";
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
 /**
- * Procedural kart bodies. Every model shares one construction kit (sculpted
- * tub, pods, wings, exhausts) with different proportions, so each reads
- * differently at a glance. Parts are merged per material: one draw call per
- * material per kart, and geometry is shared between karts of the same model.
+ * Procedural kart bodies. Each chassis kind is its own machine (an open-wheel
+ * racer, a dragster, a go-kart, a trike, a rally hatch, a monster truck, a
+ * hovercraft) built from a small kit of parts. Parts are merged per material:
+ * one draw call per material per kart, and geometry is shared between karts
+ * of the same model.
  */
 
 /** Build-time part kinds. At merge time they collapse into fewer render materials (see MERGE_INTO). */
@@ -36,15 +37,34 @@ interface Shape {
   splitter: number;
 }
 
-const SHAPES: Record<string, Shape> = {
-  claude: { length: 1, width: 1, bevel: 0.14, noseDrop: 0.1, hump: 0.2, wing: "duck", exhausts: 2, pods: "slim", fin: false, wheel: 0.44, splitter: 0.9 },
-  grok: { length: 1.08, width: 1.02, bevel: 0.03, noseDrop: 0.18, hump: 0.32, wing: "tall", exhausts: 4, pods: "wide", fin: false, wheel: 0.46, splitter: 1.15 },
-  gippity: { length: 1.04, width: 0.98, bevel: 0.08, noseDrop: 0.14, hump: 0.24, wing: "low", exhausts: 2, pods: "slim", fin: false, wheel: 0.44, splitter: 1 },
-  qwen: { length: 0.88, width: 0.94, bevel: 0.12, noseDrop: 0.06, hump: 0.16, wing: "duck", exhausts: 1, pods: "slim", fin: false, wheel: 0.4, splitter: 0.8 },
-  fable: { length: 1.14, width: 0.96, bevel: 0.1, noseDrop: 0.2, hump: 0.28, wing: "low", exhausts: 2, pods: "slim", fin: true, wheel: 0.44, splitter: 1.05 },
-  astra: { length: 1.02, width: 1.16, bevel: 0.06, noseDrop: 0.02, hump: 0.3, wing: "low", exhausts: 2, pods: "armored", fin: false, wheel: 0.52, splitter: 1.2 },
-  gemini: { length: 1.06, width: 1.04, bevel: 0.08, noseDrop: 0.14, hump: 0.22, wing: "twin", exhausts: 4, pods: "twin", fin: true, wheel: 0.45, splitter: 1 },
+const RACER: Shape = { length: 1, width: 1, bevel: 0.14, noseDrop: 0.1, hump: 0.2, wing: "duck", exhausts: 2, pods: "slim", fin: false, wheel: 0.44, splitter: 0.9 };
+
+/** Where the driver sits and where effects attach, per chassis. Local +Z is forward. */
+export interface ChassisFit {
+  /** Driver offset and scale. */
+  readonly seat: { y: number; z: number; scale: number };
+  /** Boost flame origin. */
+  readonly exhaust: { y: number; z: number };
+  /** Drift sparks: half-track and z of the rear contact patches. */
+  readonly sparks: { x: number; z: number };
+  /** Name tag height. */
+  readonly label: number;
+  /** Floats and bobs instead of sitting on wheels. */
+  readonly hover: boolean;
+}
+
+const FITS: Record<ChassisKind, ChassisFit> = {
+  racer: { seat: { y: 0, z: 0, scale: 1 }, exhaust: { y: 0.55, z: -2.4 }, sparks: { x: 0.95, z: -1.05 }, label: 3.1, hover: false },
+  dragster: { seat: { y: 0.05, z: -0.15, scale: 1 }, exhaust: { y: 0.75, z: -2.5 }, sparks: { x: 1.15, z: -1.3 }, label: 3.4, hover: false },
+  kart: { seat: { y: -0.05, z: -0.25, scale: 1 }, exhaust: { y: 0.45, z: -1.9 }, sparks: { x: 0.95, z: -1.05 }, label: 3, hover: false },
+  trike: { seat: { y: 0.1, z: -0.15, scale: 0.86 }, exhaust: { y: 0.6, z: -1.6 }, sparks: { x: 0.85, z: -0.9 }, label: 3, hover: false },
+  rally: { seat: { y: 0.3, z: -0.25, scale: 0.95 }, exhaust: { y: 0.55, z: -2.3 }, sparks: { x: 1, z: -1.15 }, label: 3.4, hover: false },
+  monster: { seat: { y: 1.05, z: -0.1, scale: 1 }, exhaust: { y: 1.5, z: -2.3 }, sparks: { x: 1.3, z: -1.35 }, label: 4.4, hover: false },
+  hover: { seat: { y: 0.2, z: -0.1, scale: 0.95 }, exhaust: { y: 1.25, z: -2.2 }, sparks: { x: 1.05, z: -1.4 }, label: 3.3, hover: true },
 };
+
+export const chassisOf = (kartId: string): ChassisKind => (KARTS.find((k) => k.id === kartId) ?? KARTS[0]).chassis.kind;
+export const chassisFit = (kartId: string): ChassisFit => FITS[chassisOf(kartId)];
 
 const geometryCache = new Map<string, Map<Part, THREE.BufferGeometry>>();
 
@@ -106,15 +126,50 @@ const tire = (radius: number, width: number) => {
   return new THREE.LatheGeometry(pts, 32).rotateZ(Math.PI / 2);
 };
 
-const buildParts = (modelId: string): Map<Part, THREE.BufferGeometry> => {
-  const recipe = SHAPES[modelId] ?? SHAPES.gippity;
-  // Compact toy-racer proportions, soft bodywork and round, oversize tires.
-  const shape = { ...recipe, length: recipe.length * .88, bevel: Math.max(.16, recipe.bevel), wheel: recipe.wheel * 1.08 };
+type Parts = Record<BuildPart, THREE.BufferGeometry[]>;
+const emptyParts = (): Parts => ({ paint: [], trim: [], carbon: [], chrome: [], tire: [], glow: [], head: [], tail: [] });
+
+/** A tire with chrome rim, spokes and hub, axle along X. */
+const wheel = (parts: Parts, x: number, z: number, r: number, width: number, y = r, spokes = 5) => {
+  const tireGeo = tire(r, width);
+  parts.tire.push(at(tireGeo, x, y, z));
+  parts.chrome.push(at(new THREE.CylinderGeometry(r * 0.58, r * 0.58, width + 0.02, 18), x, y, z, 0, 0, Math.PI / 2));
+  for (let s = 0; s < spokes; s++) {
+    const a = (s / spokes) * Math.PI * 2;
+    parts.carbon.push(at(new THREE.BoxGeometry(width + 0.05, r * 0.5, 0.07), x, y + Math.sin(a) * r * 0.3, z + Math.cos(a) * r * 0.3, a));
+  }
+  parts.trim.push(at(new THREE.CylinderGeometry(r * 0.2, r * 0.2, width + 0.04, 10), x, y, z, 0, 0, Math.PI / 2));
+};
+
+/** Chunky tread blocks around a tire. */
+const treads = (parts: Parts, x: number, z: number, r: number, width: number, y = r, count = 14) => {
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2;
+    parts.tire.push(at(new THREE.BoxGeometry(width * 1.04, 0.14, r * 0.28), x, y + Math.cos(a) * r, z + Math.sin(a) * r, a));
+  }
+};
+
+const box = (w: number, h: number, d: number) => new THREE.BoxGeometry(w, h, d);
+const rbox = (w: number, h: number, d: number, r = 0.08) => new RoundedBoxGeometry(w, h, d, 2, r);
+const cyl = (top: number, bottom: number, h: number, seg = 12) => new THREE.CylinderGeometry(top, bottom, h, seg);
+/** A tube from a to b. */
+const tube = (parts: THREE.BufferGeometry[], a: THREE.Vector3, b: THREE.Vector3, r: number) => {
+  const dir = new THREE.Vector3().subVectors(b, a);
+  const g = new THREE.CylinderGeometry(r, r, dir.length(), 8);
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize()));
+  const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+  parts.push(at(g, mid.x, mid.y, mid.z));
+};
+const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+const lights = (parts: Parts, z: number, y: number, spread: number, size = 0.3) => {
+  for (const side of [-1, 1]) parts.head.push(at(rbox(size, 0.08, 0.06, 0.02), side * spread, y, z));
+};
+
+/** The open-wheel racer: sculpted tub, side pods, wings. */
+const buildRacer = (parts: Parts): void => {
+  const shape = { ...RACER, length: RACER.length * .88, bevel: .16, wheel: RACER.wheel * 1.08 };
   const W = 1.34 * shape.width;
   const L = shape.length;
-  const parts: Record<BuildPart, THREE.BufferGeometry[]> = {
-    paint: [], trim: [], carbon: [], chrome: [], tire: [], glow: [], head: [], tail: [],
-  };
 
   parts.paint.push(at(tub(shape, W, 0.04), 0, 0, 0));
 
@@ -215,21 +270,229 @@ const buildParts = (modelId: string): Map<Part, THREE.BufferGeometry> => {
 
   }
 
-  // Wheels: rounded tires, chrome rims, painted hub.
-  const r = shape.wheel;
-  const tireGeo = tire(r, 0.42);
   for (const [x, z] of [[-1, 1.15 * L], [1, 1.15 * L], [-1, -0.95 * L], [1, -0.95 * L]] as const) {
-    const wx = x * (W / 2 + 0.36);
-    parts.tire.push(at(tireGeo.clone(), wx, r, z));
-    parts.chrome.push(at(new THREE.CylinderGeometry(r * 0.58, r * 0.58, 0.44, 18), wx, r, z, 0, 0, Math.PI / 2));
-    for (let spoke = 0; spoke < 5; spoke++) {
-      const a = (spoke / 5) * Math.PI * 2;
-      parts.carbon.push(at(new THREE.BoxGeometry(0.47, r * 0.5, 0.07), wx, r + Math.sin(a) * r * 0.3, z + Math.cos(a) * r * 0.3, a));
-    }
-    parts.trim.push(at(new THREE.CylinderGeometry(r * 0.2, r * 0.2, 0.46, 10), wx, r, z, 0, 0, Math.PI / 2));
+    wheel(parts, x * (W / 2 + 0.36), z, shape.wheel, 0.42);
   }
-  tireGeo.dispose();
+};
 
+/** Top fuel dragster: needle nose, bicycle front wheels, huge slicks, blower and stacks. */
+const buildDragster = (parts: Parts): void => {
+  // Needle nose: a four-sided taper from the cockpit to the front wheels.
+  parts.paint.push(at(cyl(0.1, 0.46, 3.7, 4), 0, 0.45, 2.05, Math.PI / 2, Math.PI / 4));
+  parts.trim.push(at(box(0.08, 0.08, 3.4), 0, 0.72, 2.05, -0.1));
+  parts.paint.push(at(rbox(1.0, 0.55, 1.5, 0.12), 0, 0.55, -0.15));
+  parts.carbon.push(at(rbox(0.8, 0.12, 0.9, 0.05), 0, 0.85, -0.05));
+  // Engine, blower and scoop sit right behind the driver.
+  parts.carbon.push(at(rbox(0.85, 0.6, 1.0, 0.06), 0, 0.85, -1.15));
+  parts.chrome.push(at(rbox(0.55, 0.4, 0.6, 0.05), 0, 1.35, -1.1));
+  parts.trim.push(at(box(0.5, 0.28, 0.42), 0, 1.68, -1.0, -0.2));
+  parts.carbon.push(at(box(0.36, 0.12, 0.3), 0, 1.85, -0.92, -0.2));
+  // Zoomie stacks, four a side, flaring out.
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 4; i++) {
+      const z = -0.8 - i * 0.18;
+      const base = v(side * 0.42, 0.95, z);
+      const tip = v(side * 0.75, 1.25, z - 0.12);
+      tube(parts.chrome, base, tip, 0.06);
+      parts.glow.push(at(new THREE.CircleGeometry(0.05, 8), tip.x, tip.y, tip.z, 0, side * Math.PI / 2));
+    }
+  }
+  // Wheelie bars and chute pack.
+  tube(parts.chrome, v(-0.3, 0.3, -1.6), v(-0.3, 0.25, -2.6), 0.04);
+  tube(parts.chrome, v(0.3, 0.3, -1.6), v(0.3, 0.25, -2.6), 0.04);
+  parts.trim.push(at(cyl(0.22, 0.22, 0.5), 0, 0.55, -2.0, Math.PI / 2));
+  parts.tail.push(at(box(0.6, 0.06, 0.03), 0, 0.82, -2.26));
+  // A wing up high on tall struts.
+  parts.paint.push(at(box(2.3, 0.08, 0.75), 0, 2.45, -2.0, 0.18));
+  for (const side of [-1, 1]) {
+    parts.carbon.push(at(box(0.06, 0.6, 0.9), side * 1.15, 2.35, -2.0));
+    tube(parts.carbon, v(side * 0.35, 0.9, -1.6), v(side * 0.55, 2.4, -2.0), 0.05);
+  }
+  // Skinny bicycle tires up front on a narrow axle, huge slicks at the back.
+  parts.carbon.push(at(box(1.15, 0.06, 0.06), 0, 0.3, 3.65));
+  for (const side of [-1, 1]) wheel(parts, side * 0.6, 3.65, 0.3, 0.16, 0.3, 4);
+  for (const side of [-1, 1]) wheel(parts, side * 1.08, -1.3, 0.8, 0.8, 0.8, 6);
+  lights(parts, 3.95, 0.4, 0.12, 0.14);
+};
+
+/** A proper go-kart: flat tray, bumpers, seat, steering wheel, side engine. */
+const buildGoKart = (parts: Parts): void => {
+  parts.carbon.push(at(box(1.5, 0.08, 2.9), 0, 0.22, 0));
+  // Nose fairing and side pods.
+  parts.paint.push(at(rbox(1.3, 0.34, 0.7, 0.12), 0, 0.42, 1.45, -0.25));
+  parts.trim.push(at(box(0.55, 0.36, 0.05), 0, 0.62, 1.82, -0.25));
+  for (const side of [-1, 1]) {
+    parts.paint.push(at(rbox(0.32, 0.34, 1.2, 0.1), side * 0.82, 0.38, -0.05));
+    parts.trim.push(at(box(0.05, 0.1, 1.0), side * 0.99, 0.44, -0.05));
+  }
+  // Bumper hoops, front and back.
+  tube(parts.chrome, v(-0.95, 0.32, 1.9), v(0.95, 0.32, 1.9), 0.06);
+  tube(parts.chrome, v(-0.95, 0.38, -1.5), v(0.95, 0.38, -1.5), 0.06);
+  for (const side of [-1, 1]) {
+    tube(parts.chrome, v(side * 0.95, 0.32, 1.9), v(side * 0.6, 0.25, 1.35), 0.05);
+    tube(parts.chrome, v(side * 0.95, 0.38, -1.5), v(side * 0.6, 0.25, -1.1), 0.05);
+  }
+  // Bucket seat, steering column and wheel.
+  parts.carbon.push(at(rbox(0.72, 0.75, 0.22, 0.1), 0, 0.72, -0.62, -0.35));
+  parts.carbon.push(at(rbox(0.72, 0.18, 0.6, 0.06), 0, 0.36, -0.35));
+  tube(parts.chrome, v(0, 0.3, 1.2), v(0, 0.9, 0.55), 0.04);
+  parts.carbon.push(at(new THREE.TorusGeometry(0.22, 0.04, 6, 16), 0, 0.92, 0.5, -0.9));
+  // The engine hangs off the right side with its exhaust.
+  parts.chrome.push(at(rbox(0.42, 0.42, 0.5, 0.06), 0.62, 0.55, -0.95));
+  parts.carbon.push(at(cyl(0.12, 0.12, 0.2), 0.62, 0.85, -0.95));
+  tube(parts.chrome, v(0.62, 0.45, -1.2), v(0.3, 0.4, -1.75), 0.06);
+  parts.glow.push(at(new THREE.CircleGeometry(0.05, 8), 0.3, 0.4, -1.78, 0, Math.PI));
+  parts.tail.push(at(box(0.5, 0.05, 0.03), -0.35, 0.42, -1.53));
+  for (const [x, z, w] of [[-1, 1.1, 0.34], [1, 1.1, 0.34], [-1, -1.05, 0.46], [1, -1.05, 0.46]] as const) {
+    wheel(parts, x * 0.98, z, 0.33, w);
+  }
+};
+
+/** A bubble trike: one wheel in front, two behind, an antenna flag. */
+const buildTrike = (parts: Parts): void => {
+  // Open-topped egg tub: the driver pokes out of it.
+  const egg = new THREE.SphereGeometry(1, 20, 14, 0, Math.PI * 2, Math.PI * 0.32, Math.PI * 0.68);
+  egg.scale(0.82, 0.7, 1.45);
+  parts.paint.push(at(egg, 0, 0.82, 0.15));
+  parts.trim.push(at(new THREE.TorusGeometry(1, 0.05, 6, 28).scale(0.72, 1.28, 1), 0, 1.18, 0.2, Math.PI / 2));
+  // Windscreen arc.
+  const screen = new THREE.SphereGeometry(0.62, 16, 8, -Math.PI * 0.4, Math.PI * 0.8, Math.PI * 0.18, Math.PI * 0.25);
+  parts.carbon.push(at(screen, 0, 1.05, 0.45));
+  // Front fork, fender and wheel.
+  tube(parts.chrome, v(-0.16, 0.42, 1.65), v(-0.12, 1.0, 1.2), 0.045);
+  tube(parts.chrome, v(0.16, 0.42, 1.65), v(0.12, 1.0, 1.2), 0.045);
+  parts.trim.push(at(new THREE.TorusGeometry(0.5, 0.08, 6, 14, Math.PI), 0, 0.45, 1.65, 0, Math.PI / 2));
+  wheel(parts, 0, 1.65, 0.4, 0.28);
+  // Rear wheels on outriggers with fenders.
+  for (const side of [-1, 1]) {
+    tube(parts.carbon, v(side * 0.4, 0.5, -0.85), v(side * 0.78, 0.46, -0.85), 0.06);
+    parts.trim.push(at(new THREE.TorusGeometry(0.52, 0.07, 6, 12, Math.PI), side * 0.86, 0.46, -0.85, 0, Math.PI / 2));
+    wheel(parts, side * 0.86, -0.85, 0.44, 0.3);
+  }
+  // Antenna with a glowing ball, and a tail fin.
+  tube(parts.chrome, v(-0.45, 0.9, -0.9), v(-0.55, 2.6, -1.1), 0.025);
+  parts.glow.push(at(new THREE.SphereGeometry(0.11, 10, 8), -0.55, 2.65, -1.1));
+  parts.trim.push(at(new THREE.ConeGeometry(0.16, 0.45, 3), -0.58, 2.35, -1.12, 0, 0, -Math.PI / 2));
+  parts.paint.push(at(box(0.06, 0.5, 0.6), 0, 1.1, -1.05, 0.3));
+  parts.head.push(at(new THREE.CircleGeometry(0.13, 12), 0, 0.85, 1.48));
+  parts.tail.push(at(box(0.6, 0.05, 0.03), 0, 0.72, -1.2));
+};
+
+/** Rally hatch: boxy shell, flared arches, light pod, a big wing, mud flaps. */
+const buildRally = (parts: Parts): void => {
+  const W = 1.9;
+  // Lower shell and bonnet.
+  parts.paint.push(at(rbox(W, 0.62, 3.7, 0.16), 0, 0.68, 0));
+  parts.paint.push(at(rbox(W * 0.96, 0.3, 1.2, 0.12), 0, 1.05, 1.15, 0.12));
+  parts.trim.push(at(box(0.5, 0.06, 0.5), 0, 1.22, 1.2, 0.12));
+  // Targa cabin: windscreen, roll hoop and rear deck. Open, so the driver shows.
+  parts.carbon.push(at(box(W * 0.86, 0.5, 0.06), 0, 1.38, 0.45, -0.55));
+  tube(parts.chrome, v(-0.82, 1.0, -0.75), v(-0.7, 1.75, -0.7), 0.06);
+  tube(parts.chrome, v(0.82, 1.0, -0.75), v(0.7, 1.75, -0.7), 0.06);
+  tube(parts.chrome, v(-0.7, 1.75, -0.7), v(0.7, 1.75, -0.7), 0.06);
+  tube(parts.chrome, v(-0.7, 1.75, -0.7), v(-0.85, 1.05, 0.4), 0.05);
+  tube(parts.chrome, v(0.7, 1.75, -0.7), v(0.85, 1.05, 0.4), 0.05);
+  parts.paint.push(at(rbox(W * 0.94, 0.42, 1.1, 0.12), 0, 1.15, -1.25));
+  // Flared arches and side skirts.
+  for (const side of [-1, 1]) {
+    for (const z of [1.2, -1.15]) parts.trim.push(at(rbox(0.32, 0.46, 1.25, 0.12), side * (W / 2 + 0.06), 0.82, z));
+    parts.carbon.push(at(box(0.08, 0.16, 1.2), side * (W / 2 + 0.02), 0.42, 0.02));
+    // Door roundel.
+    parts.trim.push(at(cyl(0.26, 0.26, 0.04, 16), side * (W / 2 + 0.01), 0.75, 0.05, 0, 0, Math.PI / 2));
+    // Mud flaps.
+    parts.carbon.push(at(box(0.4, 0.42, 0.04), side * 0.75, 0.38, -1.85));
+  }
+  // Light pod on the bonnet: four big lamps.
+  parts.carbon.push(at(box(1.3, 0.12, 0.12), 0, 1.3, 1.75));
+  for (let i = 0; i < 4; i++) parts.head.push(at(new THREE.CircleGeometry(0.13, 14), -0.48 + i * 0.32, 1.3, 1.82));
+  // Big wing on the rear deck.
+  parts.trim.push(at(box(W * 1.05, 0.08, 0.5), 0, 1.75, -1.6, 0.15));
+  for (const side of [-1, 1]) parts.carbon.push(at(box(0.06, 0.4, 0.4), side * 0.55, 1.5, -1.55));
+  parts.chrome.push(at(cyl(0.11, 0.11, 0.3), 0.55, 0.42, -1.95, Math.PI / 2));
+  parts.glow.push(at(new THREE.CircleGeometry(0.08, 10), 0.55, 0.42, -2.11, 0, Math.PI));
+  parts.tail.push(at(box(W * 0.8, 0.07, 0.03), 0, 0.98, -1.86));
+  lights(parts, 1.86, 0.78, 0.62, 0.36);
+  for (const [x, z] of [[-1, 1.2], [1, 1.2], [-1, -1.15], [1, -1.15]] as const) wheel(parts, x * 0.92, z, 0.46, 0.42);
+};
+
+/** Monster truck: a pickup on stilts with a roll cage and enormous tires. */
+const buildMonster = (parts: Parts): void => {
+  const lift = 1.05;
+  // Frame and suspension.
+  for (const side of [-1, 1]) parts.carbon.push(at(box(0.16, 0.18, 3.6), side * 0.55, lift + 0.05, 0));
+  for (const z of [1.35, -1.35]) {
+    parts.carbon.push(at(box(2.1, 0.14, 0.18), 0, 0.95, z));
+    for (const side of [-1, 1]) {
+      tube(parts.chrome, v(side * 0.5, lift + 0.1, z + 0.3), v(side * 1.0, 0.95, z), 0.07);
+      tube(parts.chrome, v(side * 0.5, lift + 0.1, z - 0.3), v(side * 1.0, 0.95, z), 0.07);
+    }
+  }
+  // Pickup body: bonnet, open cab, bed.
+  parts.paint.push(at(rbox(2.0, 0.6, 1.4, 0.14), 0, lift + 0.55, 1.1));
+  parts.trim.push(at(box(1.0, 0.18, 0.6), 0, lift + 0.92, 1.15));
+  parts.carbon.push(at(box(1.4, 0.4, 0.06), 0, lift + 0.6, 1.82));
+  parts.paint.push(at(rbox(2.0, 0.55, 1.1, 0.1), 0, lift + 0.5, 0.0));
+  parts.paint.push(at(rbox(2.0, 0.6, 1.4, 0.1), 0, lift + 0.55, -1.25));
+  parts.carbon.push(at(box(1.7, 0.1, 1.2), 0, lift + 0.82, -1.25));
+  // Roll cage over the cab, with a light bar.
+  for (const [x, z] of [[-0.85, 0.5], [0.85, 0.5], [-0.85, -0.5], [0.85, -0.5]] as const) {
+    tube(parts.chrome, v(x, lift + 0.7, z), v(x * 0.92, lift + 1.75, z * 0.85), 0.06);
+  }
+  tube(parts.chrome, v(-0.78, lift + 1.75, 0.42), v(0.78, lift + 1.75, 0.42), 0.06);
+  tube(parts.chrome, v(-0.78, lift + 1.75, -0.42), v(0.78, lift + 1.75, -0.42), 0.06);
+  tube(parts.chrome, v(-0.78, lift + 1.75, 0.42), v(-0.78, lift + 1.75, -0.42), 0.06);
+  tube(parts.chrome, v(0.78, lift + 1.75, 0.42), v(0.78, lift + 1.75, -0.42), 0.06);
+  parts.carbon.push(at(box(1.5, 0.12, 0.14), 0, lift + 1.85, 0.42));
+  for (let i = 0; i < 4; i++) parts.head.push(at(new THREE.CircleGeometry(0.11, 12), -0.54 + i * 0.36, lift + 1.85, 0.5));
+  // Stacks behind the cab.
+  for (const side of [-1, 1]) {
+    parts.chrome.push(at(cyl(0.1, 0.1, 1.1), side * 0.7, lift + 1.15, -0.62));
+    parts.glow.push(at(new THREE.CircleGeometry(0.08, 10), side * 0.7, lift + 1.71, -0.62, -Math.PI / 2));
+  }
+  lights(parts, 1.82, lift + 0.55, 0.65, 0.36);
+  parts.tail.push(at(box(1.6, 0.08, 0.03), 0, lift + 0.6, -1.96));
+  for (const [x, z] of [[-1, 1.35], [1, 1.35], [-1, -1.35], [1, -1.35]] as const) {
+    wheel(parts, x * 1.28, z, 0.95, 0.75, 0.95, 6);
+    treads(parts, x * 1.28, z, 0.95, 0.75);
+  }
+};
+
+/** Hovercraft: a hull on a rubber skirt, twin ducted fans, no wheels at all. */
+const buildHover = (parts: Parts): void => {
+  const hull = new THREE.SphereGeometry(1, 24, 12, 0, Math.PI * 2, Math.PI * 0.25, Math.PI * 0.5);
+  hull.scale(1.05, 0.55, 1.8);
+  parts.paint.push(at(hull, 0, 0.78, 0.1));
+  parts.trim.push(at(rbox(1.5, 0.12, 2.4, 0.06), 0, 1.08, 0.1));
+  // Skirt and the glow it rides on.
+  parts.tire.push(at(new THREE.TorusGeometry(1, 0.26, 8, 32).scale(1.05, 1.8, 1), 0, 0.42, 0.1, Math.PI / 2));
+  parts.glow.push(at(new THREE.TorusGeometry(1, 0.06, 6, 32).scale(1.1, 1.85, 1), 0, 0.2, 0.1, Math.PI / 2));
+  // Cockpit rim and windscreen.
+  parts.carbon.push(at(new THREE.TorusGeometry(0.55, 0.07, 6, 18).scale(1, 1.3, 1), 0, 1.15, 0.05, Math.PI / 2));
+  parts.carbon.push(at(box(1.0, 0.36, 0.05), 0, 1.3, 0.75, -0.6));
+  // Twin ducted fans with tail fins.
+  for (const side of [-1, 1]) {
+    const x = side * 0.62;
+    parts.trim.push(at(new THREE.TorusGeometry(0.5, 0.11, 8, 24), x, 1.35, -1.55));
+    parts.carbon.push(at(cyl(0.12, 0.12, 0.3), x, 1.35, -1.55, Math.PI / 2));
+    for (let b = 0; b < 5; b++) parts.carbon.push(at(box(0.08, 0.42, 0.04), x, 1.35, -1.55, 0, 0, (b / 5) * Math.PI));
+    parts.glow.push(at(new THREE.CircleGeometry(0.4, 18), x, 1.35, -1.68, 0, Math.PI));
+    parts.paint.push(at(box(0.06, 0.7, 0.55), x, 2.0, -1.65, 0.2));
+    tube(parts.carbon, v(x, 1.0, -1.1), v(x, 1.2, -1.45), 0.06);
+  }
+  // Glow strips along the flanks and a nose light.
+  for (const side of [-1, 1]) parts.glow.push(at(box(0.04, 0.06, 2.2), side * 1.04, 0.8, 0.2));
+  parts.head.push(at(rbox(0.7, 0.07, 0.06, 0.02), 0, 0.8, 1.9));
+  parts.tail.push(at(box(0.9, 0.06, 0.03), 0, 0.95, -1.7));
+};
+
+const BUILDERS: Record<ChassisKind, (parts: Parts) => void> = {
+  racer: buildRacer, dragster: buildDragster, kart: buildGoKart, trike: buildTrike,
+  rally: buildRally, monster: buildMonster, hover: buildHover,
+};
+
+const buildParts = (modelId: string): Map<Part, THREE.BufferGeometry> => {
+  const parts = emptyParts();
+  BUILDERS[chassisOf(modelId)](parts);
   const grouped = new Map<Part, THREE.BufferGeometry[]>();
   for (const [part, list] of Object.entries(parts) as Array<[BuildPart, THREE.BufferGeometry[]]>) {
     const target = MERGE_INTO[part];

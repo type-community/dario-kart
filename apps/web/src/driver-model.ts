@@ -338,4 +338,3 @@ export class DriverVisual {
     this.head.position.y = 1.65 + Math.sin(time * 2.2 + this.phase) * .012;
   }
 }
-

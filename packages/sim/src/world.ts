@@ -1,4 +1,4 @@
-import { ItemKind, KARTS, type Perk, type ThemeId } from "./content.ts";
+import { type Chassis, ItemKind, KARTS, type Perk, type ThemeId } from "./content.ts";
 import { type Input, InputBit } from "./input.ts";
 import { hash01 } from "./rng.ts";
 import { type CoinDef, FeatureKind, type ItemBoxDef, type Track, curvatureAt, generateTrack, gridSlot, makeSurface, surfaceAt, wrapS } from "./track.ts";
@@ -99,8 +99,6 @@ const fillNitro = (kart: Kart, amount: number): void => {
   kart.nitro = Math.min(1, kart.nitro + amount);
 };
 
-/** Banked, assisted cornering: this share of the road's turn rotates the kart with it. */
-export const CORNER_ASSIST = 0.12;
 /**
  * A drift mostly follows the road by itself: the nose points in, the kart
  * slides a little wide, and steering tightens or widens the line. Without
@@ -123,14 +121,17 @@ const SELF_ALIGN = 2.2;
 /** A wall hit that costs more than this share of your speed breaks a drift chain. */
 const CHAIN_BREAK_LOSS = 0.08;
 export const STAT = {
-  speedBase: 47.85,
-  speedPer: 0.55,
+  speedBase: 47.41,
+  speedPer: 0.6,
   accelBase: 16,
-  accelLight: 1.6,
+  accelLight: 4.5,
   accelHandling: 0.5,
-  steerBase: 1.5,
-  steerPer: 0.14,
-  assistPer: 0.012,
+  steerBase: 0.66,
+  steerPer: 0.26,
+  // Banked, assisted cornering: this share of the road's turn rotates the kart with it.
+  // Handling buys it: about 0.07 for the dragster, 0.3 for the trike, 0.2 on average.
+  assistBase: 0.006,
+  assistPer: 0.03,
   stunBase: 1.45,
   stunPerDurability: 0.075,
 };
@@ -169,6 +170,7 @@ export class Kart {
   readonly mass: number;
   readonly durability: number;
   readonly cornerAssist: number;
+  readonly chassis: Chassis;
 
   dist = 0;
   d = 0;
@@ -234,11 +236,12 @@ export class Kart {
     this.maxSpeed = STAT.speedBase + model.speed * STAT.speedPer;
     this.accel = STAT.accelBase + (10 - model.speed) * STAT.accelLight + model.handling * STAT.accelHandling;
     this.steerRate = STAT.steerBase + model.handling * STAT.steerPer;
-    this.grip = 3.5 + model.handling * 0.45;
-    this.cornerAssist = CORNER_ASSIST + model.handling * STAT.assistPer;
+    this.chassis = model.chassis;
+    this.grip = (3.5 + model.handling * 0.45) * model.chassis.grip;
+    this.cornerAssist = STAT.assistBase + model.handling * STAT.assistPer;
     this.traction = model.reliability / 10;
     this.hpMax = 60 + model.durability * 10;
-    this.mass = 0.75 + model.durability * 0.07;
+    this.mass = (0.75 + model.durability * 0.07) * model.chassis.weight;
     this.durability = model.durability;
     this.hp = this.hpMax;
   }
@@ -257,7 +260,7 @@ export const KART_NET_FIELDS = [
   "dist", "d", "z", "vz", "heading", "slip", "speed", "kickV",
   "boostT", "boostKind", "stunT", "giantT", "squashT", "squashGuardT", "slowFlags", "airT",
   "drifting", "driftDir", "driftCharge", "hp", "gpus", "draft", "nitro", "nitroLit", "driftChain", "chainT", "passes", "passT",
-  "trickT", "trickPending", "startResult",
+  "trickT", "trickPending", "startHold", "startResult",
   "item", "itemCount", "item2", "item2Count", "finishTick", "prevBits",
 ] as const satisfies ReadonlyArray<keyof Kart>;
 
@@ -371,6 +374,25 @@ export class World {
     stepKart(this, kart, input);
   }
 
+  /**
+   * Client prediction: one tick for your own kart, counting down to GO
+   * locally. Without this a client whose snapshots stall during the countdown
+   * sits on the line while everyone else (and its own kart, on the server) drives off.
+   */
+  predictOne(kart: Kart, input: Input): void {
+    if (this.phase === Phase.Countdown) {
+      this.phaseTicks--;
+      if (input.bits & InputBit.Throttle) kart.startHold++;
+      else kart.startHold = 0;
+      if (this.phaseTicks <= 0) {
+        this.phase = Phase.Racing;
+        applyStart(kart);
+      }
+      return;
+    }
+    this.stepOne(kart, input);
+  }
+
   private collideKarts(): void {
     const karts = this.karts;
     const L = this.track.length;
@@ -381,7 +403,7 @@ export class World {
         const b = karts[j];
         if (b.finished || b.squashT > 0) continue;
         const aGiant = a.giantT > 0, bGiant = b.giantT > 0;
-        const reach = KART_RADIUS * ((aGiant ? TOKEN_MAXING_SCALE : 1) + (bGiant ? TOKEN_MAXING_SCALE : 1));
+        const reach = a.chassis.radius * (aGiant ? TOKEN_MAXING_SCALE : 1) + b.chassis.radius * (bGiant ? TOKEN_MAXING_SCALE : 1);
         let ds = (a.dist - b.dist) % L;
         if (ds > L / 2) ds -= L;
         if (ds < -L / 2) ds += L;
@@ -436,7 +458,7 @@ export class World {
         const now = wrap(a.dist - b.dist);
         if (!(before < 0 && now >= 0) || before < -8) continue;
         const side = Math.abs(a.d - b.d);
-        const reach = KART_RADIUS * ((a.giantT > 0 ? TOKEN_MAXING_SCALE : 1) + (b.giantT > 0 ? TOKEN_MAXING_SCALE : 1));
+        const reach = a.chassis.radius * (a.giantT > 0 ? TOKEN_MAXING_SCALE : 1) + b.chassis.radius * (b.giantT > 0 ? TOKEN_MAXING_SCALE : 1);
         if (side >= CLOSE_PASS_WIDTH || side < reach - 0.05 || Math.abs(a.z - b.z) > 2.5) continue;
         a.passes++;
         a.passT = CLOSE_PASS_COOLDOWN;
@@ -640,7 +662,7 @@ const applyFeatures = (world: World, kart: Kart): void => {
     if (f.kind === FeatureKind.Bumper) {
       const ds = s - f.s;
       const dd = kart.d - f.d;
-      const reach = f.halfWidth + KART_RADIUS;
+      const reach = f.halfWidth + kart.chassis.radius;
       const dist2 = ds * ds + dd * dd;
       if (dist2 >= reach * reach || kart.z > 2) continue;
       const len = Math.sqrt(dist2) || 1e-3;
@@ -667,7 +689,7 @@ const applyFeatures = (world: World, kart: Kart): void => {
     } else if (f.kind === FeatureKind.Ramp || f.kind === FeatureKind.Launch) {
       if (kart.z < 0.3 && kart.vz <= 0 && kart.speed > 10) {
         const launch = f.kind === FeatureKind.Launch;
-        kart.vz = launch ? Math.min(22, 6 + kart.speed * 0.3) : Math.min(16, 4 + kart.speed * 0.22);
+        kart.vz = (launch ? Math.min(22, 6 + kart.speed * 0.3) : Math.min(16, 4 + kart.speed * 0.22)) * kart.chassis.hop;
         kart.z = 0.05;
         if (launch) giveBoost(kart, 1.4, BoostKind.Pad);
       }
@@ -795,7 +817,7 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
     if (kart.chainT <= 0) kart.driftChain = 0;
   }
   if (kart.drifting) {
-    kart.driftCharge += DT;
+    kart.driftCharge += DT * kart.chassis.driftRate;
     fillNitro(kart, NITRO_DRIFT * (1 + 0.35 * kart.driftChain) * DT);
     if (!driftHeld || kart.speed < 10 || !control) {
       const charge = kart.driftCharge;
@@ -827,7 +849,7 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
     kart.heading -= kart.heading * Math.min(1, SELF_ALIGN * DT);
   }
 
-  const slipTarget = kart.drifting ? kart.driftDir * 0.38 : 0;
+  const slipTarget = kart.drifting ? kart.driftDir * 0.38 * kart.chassis.driftAngle : 0;
   const slipRate = kart.drifting ? 3 : kart.grip;
   // The drift angle swings the nose without changing where the kart is going:
   // otherwise starting a drift flings you at the outside wall.
@@ -849,11 +871,11 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
   const assist = surface.loop ? 0 : !grounded ? 0.9 : kart.drifting ? Math.max(kart.cornerAssist, DRIFT_ASSIST) : kart.cornerAssist;
   kart.heading = wrapAngle(kart.heading - k * dsdt * DT * (1 - assist));
 
-  const limit = track.halfWidth - KART_RADIUS * (kart.giantT > 0 ? TOKEN_MAXING_SCALE : 1);
+  const limit = track.halfWidth - kart.chassis.radius * (kart.giantT > 0 ? TOKEN_MAXING_SCALE : 1);
   if (kart.d > limit || kart.d < -limit) {
     const side = kart.d > 0 ? 1 : -1;
     kart.d = side * limit;
-    if (kart.kickV * side > 0) kart.kickV = -kart.kickV * 0.45;
+    if (kart.kickV * side > 0) kart.kickV = -kart.kickV * 0.45 * kart.chassis.bounce;
     const impact = Math.sin(move) * side;
     if (impact > 0) {
       const h = kart.heading;

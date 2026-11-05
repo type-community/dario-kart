@@ -36,6 +36,7 @@ const bodyGeometry = mergeGeometries(pieces, false);
 for (const g of pieces) g.dispose();
 pieces.length = 0;
 const bodyMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .32, metalness: .18 });
+export { bodyGeometry as missileBodyGeometry, bodyMaterial as missileBodyMaterial };
 
 /** Two shared-geometry meshes; the jet owns only its small set of uniforms. */
 export class MissileVisual {
@@ -75,4 +76,3 @@ export const TOKEN_MAXING_ICON = `<svg viewBox="0 0 80 80" role="img" aria-label
   <path d="M28 51V36l12 9 12-9v15" fill="none" stroke="#6b397e" stroke-width="6" stroke-linejoin="round"/>
   <path d="m40 3 2 5 5 2-5 2-2 5-2-5-5-2 5-2Z" fill="#fff3bf"/>
 </svg>`;
-

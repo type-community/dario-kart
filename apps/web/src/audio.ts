@@ -193,6 +193,11 @@ export class Sound {
     this.burst(0.35, 900, { sweep: 4200, gain: 0.16, q: 0.6 });
   }
 
+  /** Lock-on beep for a missile closing in; higher as it gets closer. */
+  warn(distance: number): void {
+    this.tone(midi(Math.round(98 - Math.min(1, distance / 80) * 10)), 0.05, { type: "square", gain: 0.045 });
+  }
+
   fire(): void {
     this.burst(.20, 1000, { sweep: 4800, gain: .2, q: .6 });
     this.tone(520, .16, { type: "triangle", slide: 130, gain: .13 });

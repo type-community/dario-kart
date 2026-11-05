@@ -75,4 +75,3 @@ describe("race effect budgets and time", () => {
     a.dispose(); b.dispose();
   });
 });
-

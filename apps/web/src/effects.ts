@@ -196,6 +196,11 @@ export class RaceEffects {
     }
   }
 
+  launch(at: THREE.Vector3, up: THREE.Vector3): void {
+    this.bright.emit(at, this.zero, up, 0xffc06b, .12, .8, 2, 5);
+    this.soft.emit(at, up, up, 0xc8bdcf, .3, .4, 1.5, 2);
+  }
+
   landing(at: THREE.Vector3, up: THREE.Vector3): void {
     this.bright.emit(at, this.zero, up, 0xcce7ff, .28, 1, 10, 1);
     for (let i = 0; i < 5; i++) {
@@ -251,4 +256,3 @@ export class RaceEffects {
     for (const slot of this.lights) slot.light.dispose();
   }
 }
-

@@ -3,7 +3,8 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { jetGeometry, jetMaterial, pickupRingMaterial } from "./effect-materials.ts";
-import { type Part, kartGeometry, partMaterial } from "./kart-model.ts";
+import { type ChassisFit, type Part, chassisFit, kartGeometry, partMaterial } from "./kart-model.ts";
+import { makeRackMissile } from "./fx.ts";
 import { DriverVisual } from "./driver-model.ts";
 import { THEME_LOOKS, type PlacedBuilding, themeDecor } from "./landmarks.ts";
 
@@ -742,6 +743,8 @@ export interface KartFx {
   slip: number;
   time: number;
   showLabel: boolean;
+  /** Items held, shown as missiles on the roof rack. */
+  items: number;
 }
 
 /** Builds the kart body (shared by races and the lobby preview). Faces local +Z. */
@@ -753,8 +756,12 @@ export const buildKartBody = (look: Pick<KartLook, "kart" | "character" | "prima
     body.add(new THREE.Mesh(geo, mat));
   }
   const driver = new DriverVisual(look.character);
+  const fit = chassisFit(look.kart);
+  driver.root.position.y += fit.seat.y;
+  driver.root.position.z += fit.seat.z;
+  driver.root.scale.multiplyScalar(fit.seat.scale);
   body.add(driver.root);
-  return { body, glow, driver };
+  return { body, glow, driver, fit };
 };
 
 /** Visual for one racer. */
@@ -772,12 +779,19 @@ export class KartVisual {
   private quietHit = false;
   private flashing = false;
   private readonly label: THREE.Sprite;
+  private readonly fit: ChassisFit;
+  /** How much taller than a standard kart this one is: the chase camera rides higher. */
+  get height(): number {
+    return Math.max(0, this.fit.label - 3.1);
+  }
+  private readonly rack: THREE.Mesh[] = [];
 
   constructor(look: KartLook) {
     const built = buildKartBody(look);
     this.body = built.body;
     this.glow = built.glow;
     this.driver = built.driver;
+    this.fit = built.fit;
     this.root.add(this.body);
     this.body.traverse((part) => {
       if (part instanceof THREE.Mesh) this.surfaces.push({ mesh: part, material: part.material });
@@ -786,11 +800,11 @@ export class KartVisual {
     this.flame = new THREE.Mesh(jetGeometry, jetMaterial(0x3de0ff));
     const exhaust = kartGeometry(look.kart).get("glow")!;
     if (!exhaust.boundingBox) exhaust.computeBoundingBox();
-    this.flame.position.set(0, .5, exhaust.boundingBox!.min.z);
+    this.flame.position.set(0, this.fit.exhaust.y, exhaust.boundingBox!.min.z);
     this.body.add(this.flame);
-    for (const x of [-0.95, 0.95]) {
+    for (const x of [-this.fit.sparks.x, this.fit.sparks.x]) {
       const spark = new THREE.Mesh(fx.spark, sparkMats[0]);
-      spark.position.set(x, 0.15, -1.05);
+      spark.position.set(x, 0.15, this.fit.sparks.z);
       spark.visible = false;
       this.body.add(spark);
       this.sparks.push(spark);
@@ -802,7 +816,16 @@ export class KartVisual {
     this.tokenHalo.visible = false;
     this.root.add(this.tokenHalo);
 
+    for (const x of [0, 0.42]) {
+      const m = makeRackMissile();
+      m.position.set(x, this.fit.label - 1.5, -1.05);
+      m.visible = false;
+      this.body.add(m);
+      this.rack.push(m);
+    }
+
     this.label = labelSprite(look.me ? "You" : look.name, look.me);
+    this.label.position.y = this.fit.label;
     this.root.add(this.label);
   }
 
@@ -819,7 +842,7 @@ export class KartVisual {
     this.body.scale.set(size * (1 + flat * .28), size * (1 - flat * .82), size * (1 + flat * .18));
     this.tokenHalo.visible = giantT > 0;
     this.tokenHalo.scale.setScalar(size * (1 + Math.sin(state.time * 4) * .025));
-    this.label.position.y = squashT > 0 ? 1.5 : 3.1 * size;
+    this.label.position.y = squashT > 0 ? 1.5 : this.fit.label * size;
     this.driver.animate(state.time, state.slip, state.speed, state.stunT > 0);
     const age = state.time - this.hitAt;
     const flashing = !this.quietHit && age >= 0 && age < .065;
@@ -839,11 +862,15 @@ export class KartVisual {
     // Trick: a full barrel roll while airborne.
     this.body.rotation.x = 0;
     if (squashT <= 0 && state.trickT > 0) this.body.rotation.z = (1 - state.trickT / 0.45) * Math.PI * 2;
+    if (squashT <= 0 && this.fit.hover) {
+      this.body.position.y += 0.3 + Math.sin(state.time * 3.2 + this.fit.label) * 0.07;
+      if (state.stunT <= 0 && state.trickT <= 0) this.body.rotation.z = state.slip * 0.45;
+    }
 
     this.glow.color.setHex(state.boostT > 0 ? 0xffffff : 0x3de0ff);
     this.stars.visible = state.stunT > 0 || squashT > 0;
     this.stars.rotation.y = state.time * 3.5;
-    this.stars.position.y = (squashT > 0 ? .9 : 2.65 * size) + Math.sin(state.time * 5) * .08;
+    this.stars.position.y = (squashT > 0 ? .9 : (this.fit.label - .45) * size) + Math.sin(state.time * 5) * .08;
 
     const charge = state.driftCharge;
     const tier = charge >= 2.3 ? 3 : charge >= 1.4 ? 2 : charge >= 0.7 ? 1 : 0;
@@ -853,6 +880,11 @@ export class KartVisual {
       s.scale.setScalar(tier === 0 ? 0.7 : tier === 1 ? 1.2 : tier === 2 ? 1.7 : 2.2);
     }
     this.label.visible = state.showLabel;
+    // Armed karts carry their missiles where everyone can see them.
+    this.rack[0].visible = state.items > 0;
+    this.rack[0].position.x = state.items > 1 ? -0.21 : 0;
+    this.rack[1].visible = state.items > 1;
+    this.rack[1].position.x = 0.21;
   }
 
   dispose(): void {

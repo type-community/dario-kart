@@ -127,6 +127,7 @@ export class Hud {
       <div class="hud-banner" data-k="banner" hidden><strong data-k="bannerTitle"></strong><span data-k="bannerSub"></span></div>
       <div class="hud-placepop" data-k="placepop" hidden></div>
       <div class="hud-wrongway" data-k="wrongway" hidden>Wrong way</div>
+      <div class="hud-incoming" data-k="incoming" hidden><b>!</b><span data-k="incomingText"></span></div>
       <div class="hud-tips" data-k="tips" hidden>
         <p>Press <kbd>W</kbd> as it hits 2 for a rocket start</p>
         <p>Hold <kbd>Space</kbd> in turns to drift, let go to boost</p>
@@ -253,6 +254,12 @@ export class Hud {
     el.classList.add("pop");
     if (this.placeTimer) clearTimeout(this.placeTimer);
     this.placeTimer = setTimeout(() => (el.hidden = true), 900);
+  }
+
+  /** A missile is closing in on you. */
+  incoming(from: "behind" | "ahead" | null): void {
+    this.el.incoming.hidden = from === null;
+    if (from) this.set("incomingText", from === "behind" ? "Missile behind!" : "Missile ahead!");
   }
 
   wrongWay(show: boolean): void {

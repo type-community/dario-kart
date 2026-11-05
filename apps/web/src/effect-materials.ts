@@ -62,4 +62,3 @@ export const pickupRingMaterial = (): THREE.ShaderMaterial => new THREE.ShaderMa
     }
   `,
 });
-
