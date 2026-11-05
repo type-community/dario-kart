@@ -10,7 +10,7 @@ import { KART_NET_FIELDS, type Kart, type World } from "./world.ts";
  * new tab reaching a lobby still on old code) is told to reload instead of
  * misreading snapshots.
  */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 /** Kart paint: primary body color and secondary accent/livery color. */
 export interface Paint {

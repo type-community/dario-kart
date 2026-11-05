@@ -90,6 +90,7 @@ alchemy.run.ts    the whole stack: game Worker + Vite site
 - Kart stats are tuned with `scripts/balance.ts` (constants in `STAT` in `world.ts`): every kart's average finish is within about 0.05 of even across hundreds of bot races.
 - The server is authoritative. Clients predict their own kart, replay unacknowledged inputs on each snapshot, and render other karts about 115 ms in the past.
 - Races are 2 laps and about 50 seconds. Tracks get a little longer and wider with more racers (about 1.3 km for 8 players, 1.6 km for 30, 2.1 km for 100).
+- Each city drives and looks different. The sim side is `mix` in `THEMES` (`content.ts`): SF is all jumps over big hills, NYC is flat with hard 90s, slow zones and boost lanes, The Fab is boost pads and pinball bumpers, Shenzhen is neon switchbacks with two loops, and Beijing is a wide, smooth ring road with almost no gimmicks, so it's about slipstreaming. The look (time of day, how buildings crowd the road, landmarks like the SF bridge, Broadway billboards, the Fab's ceiling and wafers, Shenzhen's supertall, Beijing's gates and pagodas) is in `apps/web/src/landmarks.ts`.
 - Item boxes only hold Outage Missiles. Speed comes from the Compute meter, which you earn by driving well, so boosts reward skill rather than luck.
 - Accounts are ephemeral: a random id and your picks live in `localStorage`.
 

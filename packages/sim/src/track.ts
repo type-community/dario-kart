@@ -644,11 +644,12 @@ export const generateTrack = (theme: ThemeId, seed: number, playerCount: number)
     const k = curvature[sampleIndex(s + 8)];
     const downhillAhead = ty[sampleIndex(s + 30)] < -0.12;
     const roll = rng.next();
-    if (straight && roll < 0.34) {
+    const mix = themeDef.mix;
+    if (straight && roll < mix.boost) {
       const lane = rng.range(-halfWidth + 2.6, halfWidth - 2.6);
       features.push({ kind: FeatureKind.Boost, s, length: 10, d: lane, halfWidth: 2.2 });
       s += rng.range(30, 55);
-    } else if (straight && roll < 0.68) {
+    } else if (straight && roll < mix.boost + mix.ramp) {
       const full = rng.next() < 0.55;
       const side = rng.sign();
       features.push({
@@ -658,16 +659,16 @@ export const generateTrack = (theme: ThemeId, seed: number, playerCount: number)
         halfWidth: full ? halfWidth : halfWidth * 0.5,
       });
       s += rng.range(55, 95);
-    } else if (!straight && roll < 0.42) {
+    } else if (!straight && roll < mix.outside) {
       // Speed Racer lane: a boost strip high on the outside of the banked turn.
       const outside = -(Math.sign(k) || 1);
       features.push({ kind: FeatureKind.Boost, s, length: 14, d: outside * (halfWidth - 2.4), halfWidth: 2.1 });
       s += rng.range(35, 55);
-    } else if (!straight && roll < 0.62) {
+    } else if (!straight && roll < mix.outside + mix.slow) {
       const inside = Math.sign(k) || 1;
       features.push({ kind: FeatureKind.Slow, s, length: 18, d: inside * (halfWidth - 2.6), halfWidth: 2.6 });
       s += rng.range(35, 55);
-    } else if (halfWidth >= 8 && roll < 0.78) {
+    } else if (halfWidth >= 8 && rng.next() < mix.bumper) {
       const n = rng.int(1, 3);
       for (let b = 0; b < n; b++) {
         const side = rng.sign();
