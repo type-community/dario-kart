@@ -12,8 +12,6 @@ export const KART_RADIUS = 1.0;
 export const FINISH_GRACE_TICKS = 20 * TICK_RATE;
 const GRAVITY = 34;
 const SLOPE_GRAVITY = 16;
-/** Seconds the item roulette spins before you can use what you got. */
-export const ITEM_ROLL_SECONDS = 1.1;
 export const DRIFT_TIER1 = 0.7;
 export const DRIFT_TIER2 = 1.4;
 export const DRIFT_TIER3 = 2.3;
@@ -32,12 +30,38 @@ const comebackBonus = (world: World, kart: Kart): number => {
   return Math.max(0, Math.min(1, (gap - 120) / 600)) * 0.05;
 };
 
-/** Slipstream: tucked in behind another kart, a charge builds into a boost. */
-export const DRAFT_SECONDS = 1.2;
-const updateDraft = (world: World, kart: Kart, grounded: boolean): boolean => {
+/**
+ * Compute meter (the nitrous): driving with style fills it, holding Nitro
+ * burns it as a boost. A full meter lasts this many seconds.
+ */
+export const NITRO_SECONDS = 2.2;
+/** Extra top speed when the nitro burns during another boost. */
+const NITRO_STACK = 1.12;
+/** You can't light the nitro on less than this; once lit it burns until empty or released. */
+export const NITRO_MIN = 0.1;
+/** Everyone starts with a little, so the meter is there to try from the first corner. */
+export const NITRO_START = 0.25;
+/** Meter per second while fully tucked into a slipstream. */
+const NITRO_DRAFT = 0.3;
+/** Meter per second while drifting, before the chain bonus. */
+const NITRO_DRIFT = 0.1;
+/** Overtaking someone without hitting them. */
+export const NITRO_CLOSE_PASS = 0.18;
+const NITRO_TRICK = 0.1;
+/** Passing within this many meters to the side counts as a close pass. */
+export const CLOSE_PASS_WIDTH = 4.2;
+const CLOSE_PASS_COOLDOWN = 0.6;
+/** Start the next drift within this long of the last drift boost to keep the chain. */
+export const CHAIN_WINDOW = 2;
+export const MAX_CHAIN = 4;
+/** Each chained drift makes its boost this much longer. */
+const CHAIN_BOOST = 0.12;
+
+/** Slipstream: tucked in behind another kart you get towed along and fill the meter. */
+const updateDraft = (world: World, kart: Kart, grounded: boolean): void => {
   const L = world.track.length;
   let drafting = false;
-  if (grounded && kart.speed > 25 && kart.boostKind !== BoostKind.Draft) {
+  if (grounded && kart.speed > 25) {
     for (const other of world.karts) {
       if (other === kart || other.finished || other.z > 2) continue;
       let ds = (other.dist - kart.dist) % L;
@@ -49,23 +73,33 @@ const updateDraft = (world: World, kart: Kart, grounded: boolean): boolean => {
       }
     }
   }
-  if (drafting) {
-    kart.draftCharge += DT;
-    if (kart.draftCharge >= DRAFT_SECONDS) {
-      giveBoost(kart, 1.0, BoostKind.Draft);
-      kart.draftCharge = 0;
-    }
-  } else {
-    kart.draftCharge = Math.max(0, kart.draftCharge - 2 * DT);
-  }
-  return drafting;
+  // Ramps in over half a second so a kart crossing in front doesn't count.
+  kart.draft = drafting ? Math.min(1, kart.draft + 2 * DT) : Math.max(0, kart.draft - 3 * DT);
+  if (kart.draft > 0) fillNitro(kart, NITRO_DRAFT * kart.draft * DT);
+};
+
+const fillNitro = (kart: Kart, amount: number): void => {
+  kart.nitro = Math.min(1, kart.nitro + amount);
 };
 
 /** Banked, assisted cornering: this share of the road's turn rotates the kart with it. */
 export const CORNER_ASSIST = 0.16;
+/**
+ * A drift mostly follows the road by itself: the nose points in, the kart
+ * slides a little wide, and steering tightens or widens the line. Without
+ * this a drift turns far faster than most bends and ends in the wall.
+ */
+export const DRIFT_ASSIST = 0.65;
+/** Drift yaw, as shares of the kart's steer rate: a constant pull inward plus steering. */
+export const DRIFT_PULL = 0.12;
+export const DRIFT_STEER = 0.25;
+/** Hands off the steering, the kart's angle to the road decays at this rate per second. */
+const SELF_ALIGN = 3;
+/** A wall hit that costs more than this share of your speed breaks a drift chain. */
+const CHAIN_BREAK_LOSS = 0.08;
 export const STAT = {
-  speedBase: 47.5,
-  speedPer: 0.6,
+  speedBase: 47.85,
+  speedPer: 0.55,
   accelBase: 16,
   accelLight: 1.6,
   accelHandling: 0.5,
@@ -77,10 +111,8 @@ export const STAT = {
 };
 /** Why a kart is slower than it wants to be, so the HUD can always say. */
 export const SlowFlag = { Wall: 1, SlowZone: 2, Hit: 4 } as const;
-export const BoostKind = { None: 0, Pad: 1, Drift: 2, SuperDrift: 3, Landing: 4, Item: 5, UltraDrift: 6, Draft: 7, Trick: 8, Rocket: 9 } as const;
+export const BoostKind = { None: 0, Pad: 1, Drift: 2, SuperDrift: 3, Landing: 4, Nitro: 5, UltraDrift: 6, Trick: 8, Rocket: 9 } as const;
 const MISSILE_SPEED = 88;
-/** Seconds of boost from a Compute Boost item. */
-export const BOOST_ITEM_SECONDS = 1.6;
 const BOX_RESPAWN_TICKS = 2 * TICK_RATE;
 
 export const Phase = {
@@ -106,7 +138,7 @@ export class Kart {
   readonly accel: number;
   readonly steerRate: number;
   readonly grip: number;
-  /** Reliability as traction: how much speed walls, slow zones and oil can take from you. */
+  /** Reliability as traction: how much speed walls and slow zones can take from you. */
   readonly traction: number;
   readonly hpMax: number;
   readonly mass: number;
@@ -126,10 +158,20 @@ export class Kart {
   slowFlags = 0;
   airT = 0;
   kickV = 0;
-  itemRollT = 0;
   boostKind = 0;
   gpus = 0;
-  draftCharge = 0;
+  /** Slipstream strength, 0..1. */
+  draft = 0;
+  /** Compute meter, 0..1. */
+  nitro = NITRO_START;
+  /** 1 while the nitro is burning. */
+  nitroLit = 0;
+  /** Drifts chained back to back; each one makes the next boost bigger. */
+  driftChain = 0;
+  chainT = 0;
+  /** Close passes so far; the HUD calls out each new one. */
+  passes = 0;
+  passT = 0;
   trickT = 0;
   trickPending = 0;
   startHold = 0;
@@ -185,8 +227,9 @@ export class Kart {
  */
 export const KART_NET_FIELDS = [
   "dist", "d", "z", "vz", "heading", "slip", "speed", "kickV",
-  "boostT", "boostKind", "stunT", "slowFlags", "airT", "itemRollT",
-  "drifting", "driftDir", "driftCharge", "hp", "gpus", "draftCharge", "trickT", "trickPending", "startResult",
+  "boostT", "boostKind", "stunT", "slowFlags", "airT",
+  "drifting", "driftDir", "driftCharge", "hp", "gpus", "draft", "nitro", "nitroLit", "driftChain", "chainT", "passes", "passT",
+  "trickT", "trickPending", "startResult",
   "item", "itemCount", "item2", "item2Count", "finishTick", "prevBits",
 ] as const satisfies ReadonlyArray<keyof Kart>;
 
@@ -227,6 +270,8 @@ export class World {
   readonly missiles: Missile[] = Array.from({ length: 96 }, () => new Missile());
   readonly boxReadyTick: Int32Array;
   readonly coinReadyTick: Int32Array;
+  /** Where each kart was at the start of this tick, to spot overtakes. */
+  private readonly lastDist: Float64Array;
   readonly finishOrder: number[] = [];
   readonly events: GameEvent[] = [];
   tick = 0;
@@ -252,6 +297,7 @@ export class World {
     this.order = this.karts.slice();
     this.boxReadyTick = new Int32Array(this.track.itemBoxes.length);
     this.coinReadyTick = new Int32Array(this.track.coins.length);
+    this.lastDist = new Float64Array(this.karts.length);
   }
 
   get raceLength(): number {
@@ -282,7 +328,9 @@ export class World {
     if (this.phase === Phase.Finished) return;
 
     const karts = this.karts;
+    for (let i = 0; i < karts.length; i++) this.lastDist[i] = karts[i].dist;
     for (let i = 0; i < karts.length; i++) stepKart(this, karts[i], inputs[i]);
+    this.closePasses();
     this.collideKarts();
     if (!this.predict) this.stepMissiles();
     this.updateRanks();
@@ -328,6 +376,33 @@ export class World {
     }
   }
 
+  /** Overtaking someone close alongside without touching them fills your meter. */
+  private closePasses(): void {
+    const karts = this.karts;
+    const L = this.track.length;
+    const wrap = (x: number) => {
+      x %= L;
+      return x > L / 2 ? x - L : x < -L / 2 ? x + L : x;
+    };
+    for (let i = 0; i < karts.length; i++) {
+      const a = karts[i];
+      if (a.finished || a.passT > 0 || a.speed < 20 || a.stunT > 0) continue;
+      for (let j = 0; j < karts.length; j++) {
+        const b = karts[j];
+        if (j === i || b.finished) continue;
+        const before = wrap(this.lastDist[i] - this.lastDist[j]);
+        const now = wrap(a.dist - b.dist);
+        if (!(before < 0 && now >= 0) || before < -8) continue;
+        const side = Math.abs(a.d - b.d);
+        if (side >= CLOSE_PASS_WIDTH || side < KART_RADIUS * 2 - 0.05 || Math.abs(a.z - b.z) > 2.5) continue;
+        a.passes++;
+        a.passT = CLOSE_PASS_COOLDOWN;
+        fillNitro(a, NITRO_CLOSE_PASS);
+        break;
+      }
+    }
+  }
+
   private stepMissiles(): void {
     const track = this.track;
     const L = track.length;
@@ -349,7 +424,7 @@ export class World {
         m.d = m.d > 0 ? limit : -limit;
         m.heading = -m.heading;
         m.bounces++;
-        if (m.bounces > 8) m.active = false;
+        if (m.bounces > 3) m.active = false;
       }
       for (const kart of this.karts) {
         if (kart.finished || kart.z > 3) continue;
@@ -394,7 +469,7 @@ export class World {
     m.dist = owner.dist + (backward ? -3 : 3);
     m.d = owner.d;
     m.heading = backward ? Math.PI : owner.heading - owner.slip;
-    m.life = 4;
+    m.life = 2.5;
     m.bounces = 0;
     m.age = 0;
   }
@@ -430,9 +505,12 @@ const wrapAngle = (a: number): number => {
 const stun = (kart: Kart, seconds: number): void => {
   const recovery = kart.perk === "open-weights" ? 0.65 : 1;
   kart.stunT = Math.max(kart.stunT, seconds * recovery * (STAT.stunBase - kart.durability * STAT.stunPerDurability));
-  kart.speed *= 0.3;
+  // A hit spins you out but you keep some momentum: getting hit should sting, not stop you dead.
+  kart.speed *= 0.55;
   kart.drifting = 0;
   kart.driftCharge = 0;
+  kart.driftChain = 0;
+  kart.chainT = 0;
   kart.boostT = 0;
 };
 
@@ -441,35 +519,28 @@ const spillGpus = (kart: Kart): void => {
 };
 
 const damage = (world: World, kart: Kart, amount: number, by: number): void => {
-  // Tank: half damage, half the spin-out.
+  // Tank: half damage, a shorter spin-out.
   const tank = kart.perk === "tank" ? 0.5 : 1;
+  const tankStun = kart.perk === "tank" ? 0.75 : 1;
   spillGpus(kart);
   kart.hp -= amount * tank;
   if (kart.hp <= 0) {
     kart.hp = kart.hpMax;
-    stun(kart, 2.2 * tank);
+    stun(kart, 1.8 * tankStun);
   } else {
-    stun(kart, 1.2 * tank);
+    stun(kart, 0.95 * tankStun);
   }
   kart.vz = 9;
   kart.z = Math.max(kart.z, 0.05);
   world.events.push({ type: "hit", victim: kart.slot, by });
 };
 
-/** Missiles up front, boosts at the back: the further behind you are, the likelier a boost. */
-const rollItem = (world: World, kart: Kart): number => {
-  const n = world.karts.length;
-  const frac = n > 1 ? kart.rank / (n - 1) : 0;
-  const boostOdds = 0.25 + frac * 0.5;
-  return hash01(world.seed, world.tick, kart.slot * 31 + 7) < boostOdds ? ItemKind.Boost : ItemKind.Missile;
-};
-
+/** Item boxes only hold missiles; boosts come from your Compute meter. */
 const giveItem = (world: World, kart: Kart): void => {
-  const item = rollItem(world, kart);
+  const item = ItemKind.Missile;
   if (kart.item === ItemKind.None) {
     kart.item = item;
     kart.itemCount = 1;
-    kart.itemRollT = ITEM_ROLL_SECONDS;
   } else if (kart.perk === "twin-engine" && kart.item2 === ItemKind.None) {
     kart.item2 = item;
     kart.item2Count = 1;
@@ -481,9 +552,8 @@ const giveItem = (world: World, kart: Kart): void => {
 
 const useItem = (world: World, kart: Kart, backward: boolean): void => {
   const item = kart.item;
-  if (item === ItemKind.None || kart.itemRollT > 0) return;
-  if (item === ItemKind.Missile) world.spawnMissile(kart, backward);
-  else giveBoost(kart, BOOST_ITEM_SECONDS * (kart.perk === "plugins" ? 1.15 : 1), BoostKind.Item);
+  if (item === ItemKind.None) return;
+  world.spawnMissile(kart, backward);
   world.events.push({ type: "use", slot: kart.slot, item });
   kart.itemCount--;
   if (kart.itemCount <= 0) {
@@ -583,8 +653,9 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
   if (kart.boostT <= 0) kart.boostKind = BoostKind.None;
   if (kart.stunT > 0) kart.stunT -= DT;
   if (kart.wallT > 0) kart.wallT -= DT;
-  if (kart.itemRollT > 0) kart.itemRollT -= DT;
   if (kart.trickT > 0) kart.trickT -= DT;
+  if (kart.passT > 0) kart.passT -= DT;
+  if (kart.chainT > 0 && !kart.drifting) kart.chainT -= DT;
 
   // Tap drift in the air to pull a trick; land it for a boost.
   if (!grounded && control && pressed & InputBit.Drift && kart.airT > 0.06 && !kart.trickPending) {
@@ -596,8 +667,16 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
     useItem(world, kart, (bits & InputBit.Back) !== 0);
   }
 
+  // Nitro: hold to burn the meter. Lighting it takes a minimum; once lit it runs until empty.
+  if (control && bits & InputBit.Nitro && kart.nitro > 0 && (kart.nitroLit || kart.nitro >= NITRO_MIN)) {
+    kart.nitro = Math.max(0, kart.nitro - DT / (NITRO_SECONDS * (kart.perk === "plugins" ? 1.25 : 1)));
+    kart.nitroLit = 1;
+    giveBoost(kart, 0.12, BoostKind.Nitro);
+  } else {
+    kart.nitroLit = 0;
+  }
+
   const throttleHeld = (bits & InputBit.Throttle) !== 0;
-  const engineCut = false;
 
   surfaceAt(track, kart.dist, surface);
   const k = surface.curvature;
@@ -612,14 +691,17 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
   const gpuBonus = 1 + kart.gpus * GPU_BONUS;
   maxSpeed *= gpuBonus * (1 + comebackBonus(world, kart));
   accel *= gpuBonus;
-  if (updateDraft(world, kart, grounded)) maxSpeed *= 1.04;
+  updateDraft(world, kart, grounded);
+  maxSpeed *= 1 + 0.05 * kart.draft;
   if (kart.boostT > 0) {
-    maxSpeed *= kart.perk === "unhinged" ? 1.38 : 1.36;
+    maxSpeed *= kart.perk === "unhinged" ? 1.37 : 1.36;
     accel *= 2.2;
+    // Nitro stacks on top of any other boost, so burning it always does something.
+    if (kart.nitroLit && kart.boostKind !== BoostKind.Nitro) maxSpeed *= NITRO_STACK;
   }
   if (kart.slowZone) maxSpeed *= kart.perk === "constitutional" ? 0.85 : 0.55 + kart.traction * 0.2;
 
-  const throttle = control && !engineCut && (throttleHeld || kart.boostT > 0);
+  const throttle = control && (throttleHeld || kart.boostT > 0);
   const brake = control && (bits & InputBit.Brake) !== 0;
   if (throttle && kart.speed < maxSpeed) {
     const ratio = Math.max(0, kart.speed) / maxSpeed;
@@ -634,22 +716,31 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
     const drop = (Math.abs(kart.speed) * 1.1 + 7) * DT;
     kart.speed = Math.abs(kart.speed) <= drop ? 0 : kart.speed - Math.sign(kart.speed) * drop;
   }
-  if (!control) kart.speed -= kart.speed * 2.5 * DT;
+  if (!control) kart.speed -= kart.speed * 0.3 * DT;
 
   const driftHeld = (bits & InputBit.Drift) !== 0;
-  if (control && grounded && driftHeld && !kart.drifting && Math.abs(steer) > 0.3 && kart.speed > 14) {
+  if (control && grounded && driftHeld && !kart.drifting && Math.abs(steer) > 0.2 && kart.speed > 12) {
     kart.drifting = 1;
     kart.driftDir = Math.sign(steer);
     kart.driftCharge = 0;
+    if (kart.chainT <= 0) kart.driftChain = 0;
   }
   if (kart.drifting) {
     kart.driftCharge += DT;
+    fillNitro(kart, NITRO_DRIFT * (1 + 0.35 * kart.driftChain) * DT);
     if (!driftHeld || kart.speed < 10 || !control) {
       const charge = kart.driftCharge;
-      const story = kart.perk === "storyteller" ? 1.4 : 1;
-      if (control && charge >= DRIFT_TIER3) giveBoost(kart, 1.8 * story, BoostKind.UltraDrift);
-      else if (control && charge >= DRIFT_TIER2) giveBoost(kart, 1.25 * story, BoostKind.SuperDrift);
-      else if (control && charge >= DRIFT_TIER1) giveBoost(kart, 0.7 * story, BoostKind.Drift);
+      const tier = !control ? 0 : charge >= DRIFT_TIER3 ? 3 : charge >= DRIFT_TIER2 ? 2 : charge >= DRIFT_TIER1 ? 1 : 0;
+      if (tier > 0) {
+        // Chain drifts back to back and every boost in the chain gets longer.
+        kart.driftChain = Math.min(MAX_CHAIN, kart.driftChain + 1);
+        kart.chainT = CHAIN_WINDOW;
+        const scale = (kart.perk === "storyteller" ? 1.4 : 1) * (1 + CHAIN_BOOST * (kart.driftChain - 1));
+        if (tier === 3) giveBoost(kart, 1.8 * scale, BoostKind.UltraDrift);
+        else if (tier === 2) giveBoost(kart, 1.25 * scale, BoostKind.SuperDrift);
+        else giveBoost(kart, 0.7 * scale, BoostKind.Drift);
+      }
+      // A drift too short to pay out neither adds to the chain nor breaks it.
       kart.drifting = 0;
       kart.driftCharge = 0;
     }
@@ -658,14 +749,22 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
   const absSpeed = Math.abs(kart.speed);
   const speedFactor = Math.min(1, absSpeed / 10) * (1 - 0.3 * Math.min(1, absSpeed / 60));
   let yaw = kart.drifting
-    ? kart.steerRate * speedFactor * (kart.driftDir * 0.8 + steer * 0.5)
+    ? kart.steerRate * speedFactor * (kart.driftDir * DRIFT_PULL + steer * DRIFT_STEER)
     : steer * kart.steerRate * speedFactor * (kart.speed < 0 ? -1 : 1);
   if (!grounded) yaw *= 0.5;
   kart.heading += yaw * DT;
+  // Forgiving: let go of the stick and the kart settles back in line with the road.
+  if (control && grounded && !kart.drifting && Math.abs(steer) < 0.1 && Math.abs(kart.heading) < 1.2) {
+    kart.heading -= kart.heading * Math.min(1, SELF_ALIGN * DT);
+  }
 
   const slipTarget = kart.drifting ? kart.driftDir * 0.38 : 0;
   const slipRate = kart.drifting ? 3 : kart.grip;
-  kart.slip += (slipTarget - kart.slip) * Math.min(1, slipRate * DT);
+  // The drift angle swings the nose without changing where the kart is going:
+  // otherwise starting a drift flings you at the outside wall.
+  const slipStep = (slipTarget - kart.slip) * Math.min(1, slipRate * DT);
+  kart.slip += slipStep;
+  if (grounded) kart.heading += slipStep;
 
   if (grounded) {
     kart.speed -= SLOPE_GRAVITY * surface.slope * (surface.loop ? 0.5 : 1) * DT;
@@ -678,7 +777,7 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
   kart.d += (kart.speed * Math.sin(move) + kart.kickV) * DT;
   kart.kickV -= kart.kickV * Math.min(1, 2.6 * DT);
   // In the air the kart keeps following the road's curve, so jumps don't land you in the wall.
-  const assist = surface.loop ? 0 : grounded ? kart.cornerAssist : 0.9;
+  const assist = surface.loop ? 0 : !grounded ? 0.9 : kart.drifting ? Math.max(kart.cornerAssist, DRIFT_ASSIST) : kart.cornerAssist;
   kart.heading = wrapAngle(kart.heading - k * dsdt * DT * (1 - assist));
 
   const limit = track.halfWidth - KART_RADIUS;
@@ -693,9 +792,14 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
       kart.slip = 0;
       // Walls are glancing: a scrape costs almost nothing, only a head-on hit hurts.
       if (kart.wallT <= 0) {
-        const loss = impact * impact * (0.32 - kart.traction * 0.12) * (kart.perk === "constitutional" ? 0.5 : 1);
+        const loss = impact * impact * (0.24 - kart.traction * 0.09) * (kart.perk === "constitutional" ? 0.25 : 1);
         kart.speed *= 1 - loss;
-        if (loss > 0.03) kart.slowFlags |= SlowFlag.Wall;
+        // Only a real hit gets the HUD warning; scraping through a drift is part of driving.
+        if (loss > 0.06) kart.slowFlags |= SlowFlag.Wall;
+        if (loss > CHAIN_BREAK_LOSS) {
+          kart.driftChain = 0;
+          kart.chainT = 0;
+        }
       }
       kart.wallT = 0.3;
     }
@@ -721,8 +825,10 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
       if (kart.z <= 0) {
         kart.z = 0;
         kart.vz = 0;
-        if (kart.trickPending && kart.stunT <= 0) giveBoost(kart, 1.0, BoostKind.Trick);
-        else if (kart.airT > 0.55 && kart.stunT <= 0) giveBoost(kart, 0.5, BoostKind.Landing);
+        if (kart.trickPending && kart.stunT <= 0) {
+          giveBoost(kart, 1.0, BoostKind.Trick);
+          fillNitro(kart, NITRO_TRICK);
+        } else if (kart.airT > 0.55 && kart.stunT <= 0) giveBoost(kart, 0.5, BoostKind.Landing);
         kart.trickPending = 0;
         kart.airT = 0;
       }

@@ -2,7 +2,7 @@ import { ItemKind } from "./content.ts";
 import { type Input, InputBit } from "./input.ts";
 import { hash01 } from "./rng.ts";
 import { curvatureAt } from "./track.ts";
-import { DT, type Kart, Phase, type World } from "./world.ts";
+import { DRIFT_ASSIST, DRIFT_PULL, DRIFT_STEER, DT, type Kart, Phase, type World } from "./world.ts";
 
 /**
  * Track-following AI. Used for bot racers, for humans after they finish, and
@@ -10,11 +10,15 @@ import { DT, type Kart, Phase, type World } from "./world.ts";
  */
 export const botInput = (world: World, kart: Kart, out: Input, skillOverride?: number): Input => {
   let skill = skillOverride ?? kart.botSkill;
+  let easing = false;
   // Bots well ahead of every human ease off, so races against bots stay winnable.
   if (skillOverride === undefined && kart.bot) {
     let bestHuman = -Infinity;
     for (const k of world.karts) if (!k.bot) bestHuman = Math.max(bestHuman, k.dist);
-    if (bestHuman > -Infinity && kart.dist - bestHuman > 60) skill *= 0.9;
+    if (bestHuman > -Infinity && kart.dist - bestHuman > 60) {
+      skill *= 0.9;
+      easing = true;
+    }
   }
   const track = world.track;
   if (world.phase === Phase.Countdown) {
@@ -44,6 +48,11 @@ export const botInput = (world: World, kart: Kart, out: Input, skillOverride?: n
   const wantHeading = Math.atan2(kart.botLane - kart.d, lookahead);
   const feedForward = (signedK * absSpeed * (1 - kart.cornerAssist)) / (kart.steerRate * speedFactor);
   let steer = (wantHeading - kart.heading) * 2.6 + feedForward;
+  if (kart.drifting) {
+    // Drifting turns differently: steer the slide's travel direction, not the nose.
+    const driftFF = (signedK * absSpeed * (1 - DRIFT_ASSIST)) / (kart.steerRate * speedFactor * DRIFT_STEER) - (kart.driftDir * DRIFT_PULL) / DRIFT_STEER;
+    steer = (wantHeading - (kart.heading - kart.slip)) * 2.6 + driftFF;
+  }
   const backwards = kart.heading > 1.4 || kart.heading < -1.4;
   if (backwards) {
     // Turn the nose away from the nearest wall, never into it.
@@ -70,6 +79,12 @@ export const botInput = (world: World, kart: Kart, out: Input, skillOverride?: n
   if (speed > cornerLimit * 1.2 && !kart.drifting && !backwards) bits = InputBit.Brake;
   if (speed > kart.maxSpeed * skill && kart.boostT <= 0) bits &= ~InputBit.Throttle;
 
+  // Nitro on straights; keep burning once lit, and never sit on a full meter.
+  if (!kart.finished && !easing && !backwards && !(bits & InputBit.Brake) && kart.nitro > 0) {
+    const straight = cornerLimit > kart.maxSpeed * 1.35;
+    if ((straight && (kart.nitroLit || kart.nitro > 0.5)) || kart.nitro > 0.97) bits |= InputBit.Nitro;
+  }
+
   if (kart.item !== ItemKind.None && !kart.finished) {
     kart.botItemDelay -= DT;
     if (kart.botItemDelay <= 0 && !(kart.prevBits & InputBit.Item)) {
@@ -77,7 +92,7 @@ export const botInput = (world: World, kart: Kart, out: Input, skillOverride?: n
       if (kart.item === ItemKind.Missile && kart.rank === 0 && hash01(world.seed, world.tick, 5) < 0.5) {
         bits |= InputBit.Back;
       }
-      kart.botItemDelay = 0.6 + hash01(world.seed, world.tick, kart.slot + 11) * 2.5;
+      kart.botItemDelay = 1.5 + hash01(world.seed, world.tick, kart.slot + 11) * 3.5;
     }
   }
 
