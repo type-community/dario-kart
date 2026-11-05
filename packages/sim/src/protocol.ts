@@ -6,9 +6,10 @@ import { KART_NET_FIELDS, type Kart, type World } from "./world.ts";
 /** Lobby/control traffic is JSON text; race traffic is binary. */
 
 /**
- * Bumped whenever the wire format changes. A tab from before a deploy (or a
- * new tab reaching a lobby still on old code) is told to reload instead of
- * misreading snapshots.
+ * Bumped whenever the wire format, kart physics or track generation changes:
+ * the client predicts its kart and builds the track from the seed itself, so
+ * it must run the same sim as the lobby. A tab from before a deploy (or a new
+ * tab reaching a lobby still on old code) is told to reload instead.
  */
 export const PROTOCOL_VERSION = 5;
 
