@@ -206,6 +206,11 @@ export class RaceView {
     });
     const theme = themeById(setup.track);
     this.trackScene = buildTrackScene(this.world.track, theme, stage.scene);
+    // Whoever grabs a box or GPU, it pops instead of just vanishing.
+    this.trackScene.onPickup = (kind, at) => {
+      if (kind === "box") this.sparks.burst(at, 18, [0xffc93c, 0xff3d7f, 0x3de0ff, 0xb18cff], 5, 0.4, 0, 2);
+      else this.sparks.burst(at, 12, 0x9be22d, 4, 0.35, 0, 2);
+    };
     this.visuals = setup.slots.map((slot, i) => {
       const v = new KartVisual({
         kart: slot.kart, character: slot.character, name: slot.name, primary: slot.primary, secondary: slot.secondary,
@@ -783,10 +788,7 @@ export class RaceView {
       laps: world.laps,
       raceSeconds: world.phase === Phase.Countdown ? 0 : focus.finished ? (focus.finishTick - COUNTDOWN_TICKS) / TICK_RATE : racingSeconds,
       speed: focus.speed,
-      maxSpeed: focus.maxSpeed,
       boosting: focus.boostT > 0,
-      hp: focus.hp,
-      hpMax: focus.hpMax,
       item: focus.item,
       itemCount: focus.itemCount,
       item2: focus.item2,
