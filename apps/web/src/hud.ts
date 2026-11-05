@@ -47,9 +47,11 @@ export interface HudState {
   gpus: number;
   /** Slipstream strength, 0..1. */
   draft: number;
-  /** Compute meter, 0..1. */
+  /** Boost meter, 0..1. */
   nitro: number;
   nitroLit: boolean;
+  /** The boost button is held this tick (lit or not). */
+  nitroHeld: boolean;
   driftChain: number;
   passes: number;
 }
@@ -65,6 +67,12 @@ const ordinal = (n: number) => {
   const v = n % 100;
   return { n: String(n), suffix: s[(v - 20) % 10] || s[v] || s[0] };
 };
+
+/** Races in which you've boosted; after a few we stop nagging until the meter sits full. */
+const BOOSTED_KEY = "dk.boosted";
+const LEARNED_AFTER = 3;
+/** A full meter left unused this long earns a reminder. */
+const IDLE_FULL_MS = 3500;
 
 const formatTime = (t: number) => {
   const m = Math.floor(t / 60);
@@ -85,11 +93,15 @@ export class Hud {
   private lastItem = 0;
   private lastPasses = 0;
   private calloutTimer: ReturnType<typeof setTimeout> | null = null;
+  private boostedThisRace = false;
+  private fullSince = 0;
+  private deniedUntil = 0;
+  private pad = false;
+  private learned = false;
 
   constructor(root: HTMLElement) {
     this.root = root;
     root.innerHTML = `
-      <div class="hud-lap"><span data-k="lap"></span><small data-k="time"></small></div>
       <div class="hud-items" data-k="items">
         <div class="item-slot" data-k="slot1"><span class="glyph" data-k="glyph1"></span><span class="count" data-k="count1"></span></div>
         <div class="item-slot second" data-k="slot2" hidden><span class="glyph" data-k="glyph2"></span><span class="count" data-k="count2"></span></div>
@@ -109,21 +121,31 @@ export class Hud {
       <div class="hud-banner" data-k="banner" hidden><strong data-k="bannerTitle"></strong><span data-k="bannerSub"></span></div>
       <div class="hud-placepop" data-k="placepop" hidden></div>
       <div class="hud-wrongway" data-k="wrongway" hidden>Wrong way</div>
-      <div class="hud-emotes" data-k="emotes"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> trash talk <kbd>M</kbd> sound</div>
       <div class="hud-tips" data-k="tips" hidden>
         <p>Press <kbd>W</kbd> as it hits 2 for a rocket start</p>
         <p>Hold <kbd>Space</kbd> in turns to drift, let go to boost</p>
-        <p><kbd>Shift</kbd> burns your Compute meter</p>
+        <p><kbd>1</kbd>–<kbd>4</kbd> trash talk, <kbd>M</kbd> sound</p>
       </div>
-      <div class="hud-pos"><span class="place" data-k="place"></span><span class="of" data-k="of"></span></div>
+      <div class="hud-pos">
+        <div class="place-row"><span class="place" data-k="place"></span><span class="of" data-k="of"></span></div>
+        <div class="lap-row"><span class="lap" data-k="lap"></span><span class="time" data-k="time"></span></div>
+      </div>
+      <div class="hud-boost" data-k="boost">
+        <div class="boost-prompt" data-k="boostPrompt" hidden>Hold <kbd data-k="promptKey">Shift</kbd> to boost</div>
+        <div class="boost-gauge">
+          <kbd class="boost-key" data-k="boostKey">Shift</kbd>
+          <div class="boost-bar"><i data-k="boostFill"></i></div>
+          <span class="boost-label" data-k="boostLabel">Boost</span>
+        </div>
+      </div>
       <div class="hud-speed">
-        <div class="speed-row"><span class="gpus" data-k="gpus" title="GPUs: each adds top speed"></span><span class="num" data-k="speed"></span><span class="unit">km/h</span></div>
-        <div class="nitro" data-k="nitro"><div class="bar"><i data-k="nitroFill"></i></div><span>Compute <kbd>Shift</kbd></span></div>
+        <span class="gpus" data-k="gpus" title="GPUs: each adds top speed"></span><span class="num" data-k="speed"></span><span class="unit">km/h</span>
       </div>
       <div class="hud-spectate" data-k="spectate" hidden>Spectating. You'll join the next race.</div>
     `;
     for (const node of root.querySelectorAll<HTMLElement>("[data-k]")) this.el[node.dataset.k!] = node;
     this.map = root.querySelector("canvas")!;
+    window.addEventListener("gamepadconnected", () => (this.pad = true));
   }
 
   show(visible: boolean): void {
@@ -138,6 +160,13 @@ export class Hud {
     this.lastBoostKind = 0;
     this.lastItem = 0;
     this.lastPasses = 0;
+    this.boostedThisRace = false;
+    this.fullSince = 0;
+    try {
+      this.learned = Number(localStorage.getItem(BOOSTED_KEY) ?? 0) >= LEARNED_AFTER;
+    } catch {
+      this.learned = false;
+    }
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (let k = 0; k < track.count; k++) {
       minX = Math.min(minX, track.px[k]); maxX = Math.max(maxX, track.px[k]);
@@ -242,7 +271,7 @@ export class Hud {
     const pos = ordinal(s.finishedPlace > 0 ? s.finishedPlace : s.place);
     this.set("place", pos.n);
     this.set("of", `${pos.suffix} / ${s.total}`);
-    this.set("lap", s.finishedPlace > 0 ? "Finished" : `Lap ${s.lap} of ${s.laps}`);
+    this.set("lap", s.finishedPlace > 0 ? "Finished" : `Lap ${s.lap}/${s.laps}`);
     this.set("time", formatTime(Math.max(0, s.raceSeconds)));
     this.set("speed", String(Math.round(Math.abs(s.speed) * 3.6)));
     this.el.speed.classList.toggle("boosting", s.boosting);
@@ -281,7 +310,7 @@ export class Hud {
       }
       this.lastBoostKind = s.boostKind;
     }
-    if (s.passes > this.lastPasses && !s.spectating) this.callout("Close pass! +Compute", "item");
+    if (s.passes > this.lastPasses && !s.spectating) this.callout("Close pass! +Boost", "item");
     this.lastPasses = s.passes;
 
     const gpuKey = `${s.gpus}`;
@@ -291,16 +320,7 @@ export class Hud {
       this.el.gpus.classList.toggle("max", s.gpus >= MAX_GPUS);
     }
     this.el.gpus.hidden = s.spectating || s.gpus === 0;
-    this.el.nitro.hidden = s.spectating;
-    // Slipstream shows on the meter it fills instead of with a bar of its own.
-    this.el.nitro.classList.toggle("filling", s.draft > 0.05 && !s.nitroLit);
-    this.el.nitroFill.style.width = `${Math.max(0, Math.min(1, s.nitro)) * 100}%`;
-    const nitroState = s.nitroLit ? "lit" : s.nitro >= 0.99 ? "full" : s.nitro >= NITRO_MIN ? "ready" : "";
-    if (this.last.nitroState !== nitroState) {
-      this.last.nitroState = nitroState;
-      this.el.nitro.dataset.state = nitroState;
-    }
-
+    this.updateBoost(s);
 
     // Every slowdown says exactly what caused it.
     const cause = SLOW_CAUSES.find((c) => s.slowFlags & c.flag);
@@ -325,7 +345,6 @@ export class Hud {
       if (text) center.classList.add("slam");
     }
     this.el.tips.hidden = s.spectating || !(countdown > 0 || (s.racing && s.raceSeconds < 4));
-    this.el.emotes.hidden = this.el.tips.hidden;
 
     this.set("status", s.status);
     this.el.status.classList.toggle("bad", s.statusBad);
@@ -371,6 +390,44 @@ export class Hud {
         ctx.fill();
       }
     }
+  }
+
+  /** The boost meter is the one thing worth teaching mid-race, so it teaches itself. */
+  private updateBoost(s: HudState): void {
+    const el = this.el.boost;
+    el.hidden = s.spectating || s.finishedPlace > 0;
+    if (el.hidden) return;
+    const now = performance.now();
+    const fill = Math.max(0, Math.min(1, s.nitro));
+    this.el.boostFill.style.width = `${fill * 100}%`;
+    const state = s.nitroLit ? "lit" : fill >= 0.99 ? "full" : fill >= NITRO_MIN ? "ready" : "";
+    if (this.last.boostState !== state) {
+      this.last.boostState = state;
+      el.dataset.state = state;
+      this.set("boostLabel", state === "lit" ? "Boosting" : "Boost");
+    }
+    // Slipstream shows on the meter it fills instead of with a bar of its own.
+    el.classList.toggle("filling", s.draft > 0.05 && !s.nitroLit);
+    // Pressing with nothing in the tank should say so instead of doing nothing.
+    if (s.nitroHeld && !s.nitroLit && s.racing) this.deniedUntil = now + 350;
+    el.classList.toggle("denied", now < this.deniedUntil);
+
+    if (s.nitroLit && !this.boostedThisRace) {
+      this.boostedThisRace = true;
+      try {
+        localStorage.setItem(BOOSTED_KEY, String(Number(localStorage.getItem(BOOSTED_KEY) ?? 0) + 1));
+      } catch {
+        // Private mode: keep prompting, which is harmless.
+      }
+    }
+    this.fullSince = state === "full" ? this.fullSince || now : 0;
+    const idleFull = this.fullSince > 0 && now - this.fullSince > IDLE_FULL_MS;
+    const prompt = s.racing && s.raceSeconds > 1.5 && state !== "" && state !== "lit" && !s.drifting
+      && ((!this.learned && !this.boostedThisRace) || idleFull);
+    this.el.boostPrompt.hidden = !prompt;
+    const key = this.pad ? "A" : "Shift";
+    this.set("boostKey", key);
+    this.set("promptKey", key);
   }
 
   feed(text: string): void {

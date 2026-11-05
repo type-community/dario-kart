@@ -1,7 +1,7 @@
 import {
-  BoostKind, COUNTDOWN_TICKS, type DecodedSnapshot, DT, type Input, ItemKind, KART_NET_FIELDS, type Kart, Phase,
-  type RaceSlot, TICK_RATE, type ThemeId, World, applyKartFields, botInput, characterIndex,
-  copyInput, kartIndex, makeInput, themeById, wrapS,
+  BoostKind, COUNTDOWN_TICKS, type DecodedSnapshot, DT, type Input, InputBit, ItemKind, KART_NET_FIELDS, KART_RADIUS, type Kart,
+  Phase, type RaceSlot, TICK_RATE, type ThemeId, World, applyKartFields, botInput, characterIndex,
+  copyInput, kartIndex, makeInput, themeById, touchesBox, touchesCoin, wrapS,
 } from "@dario-kart/sim";
 import * as THREE from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
@@ -116,6 +116,15 @@ interface Snap {
 const F = KART_NET_FIELDS.length;
 const FIELD = Object.fromEntries(KART_NET_FIELDS.map((k, i) => [k, i])) as Record<(typeof KART_NET_FIELDS)[number], number>;
 const INTERP_TICKS = 7;
+/**
+ * Other karts are interpolated in the past, but your own kart is predicted
+ * ahead of the server. They're pushed forward along their recent motion to
+ * your kart's moment, so side-by-side on screen is side-by-side on the server.
+ * Capped so a long stall doesn't send them sailing.
+ */
+const MAX_LEAD_SECONDS = 0.45;
+/** How long a pickup you drove through stays hidden waiting for the server to agree. */
+const PICKUP_HOLD_SECONDS = 1;
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 
 const lerpAngle = (a: number, b: number, t: number) => {
@@ -164,6 +173,17 @@ export class RaceView {
   private latest: DecodedSnapshot | null = null;
   private tickOffset: number | null = null;
   private readonly correction = { dist: 0, d: 0 };
+  /** Per remote kart: smoothed forward offset (dist, d) that brings it up to your kart's moment. */
+  private readonly lead: Float32Array;
+  private renderTick = 0;
+  /** Server tick your predicted kart is at; other karts are drawn at it too. */
+  private presentTick = 0;
+  private presentGap = 0;
+  // Pickups your predicted kart touched, hidden until the server confirms (or the hold runs out).
+  private boxHold: Float32Array;
+  private coinHold: Float32Array;
+  private readonly boxesShown: Uint8Array;
+  private readonly coinsShown: Uint8Array;
   private statusText = "";
   private statusUntil = 0;
   private statusBad = false;
@@ -226,6 +246,11 @@ export class RaceView {
     });
     this.render = this.prev.map((p) => ({ ...p }));
     this.inputs = this.world.karts.map(() => makeInput());
+    this.lead = new Float32Array(this.world.karts.length * 2);
+    this.boxHold = new Float32Array(this.world.track.itemBoxes.length);
+    this.coinHold = new Float32Array(this.world.track.coins.length);
+    this.boxesShown = new Uint8Array(this.boxHold.length);
+    this.coinsShown = new Uint8Array(this.coinHold.length);
     for (let i = 0; i < 24; i++) {
       const m = makeMissileMesh();
       m.visible = false;
@@ -260,7 +285,7 @@ export class RaceView {
   frame(dtSeconds: number): void {
     const dt = Math.min(0.1, dtSeconds);
     if (this.paused) {
-      this.draw(0);
+      this.draw(0, dt);
       return;
     }
     this.time += dt;
@@ -273,7 +298,7 @@ export class RaceView {
       else this.tickLocal();
     }
     if (steps === 5) this.accumulator = 0;
-    this.draw(this.accumulator / DT);
+    this.draw(this.accumulator / DT, dt);
   }
 
   private tickLocal(): void {
@@ -300,7 +325,9 @@ export class RaceView {
   private describeLocal(event: World["events"][number]): void {
     if (!this.hud || this.mode.kind === "attract") return;
     const name = (slot: number) => (slot === this.setup.you ? "You" : this.setup.slots[slot]?.name ?? "Someone");
-    if (event.type === "hit" && event.by >= 0 && event.by !== event.victim) {
+    // Bots fighting each other is noise; only hits a human was part of make the feed.
+    const human = (slot: number) => !this.setup.slots[slot]?.bot;
+    if (event.type === "hit" && event.by >= 0 && event.by !== event.victim && (human(event.by) || human(event.victim))) {
       this.hud.feed(`${name(event.by)} hit ${name(event.victim)}`);
     } else if (event.type === "finish") {
       this.hud.feed(`${name(event.slot)} finished`);
@@ -372,14 +399,28 @@ export class RaceView {
 
   /* ---------------- rendering ---------------- */
 
-  private interpolate(i: number, out: Pose): void {
+  /** Where in server time to draw remote karts and your own, for this frame. */
+  private updateClock(dt: number): void {
+    const snaps = this.snaps;
+    if (snaps.length === 0 || this.tickOffset === null) return;
+    this.renderTick = performance.now() / 1000 * TICK_RATE + this.tickOffset - INTERP_TICKS;
+    const newest = snaps[snaps.length - 1].tick;
+    // Spectators have no predicted kart to line up with, so they watch the smooth past.
+    // Smooth the gap rather than the tick itself, which would trail a moving clock.
+    const gap = this.me ? newest + this.pending.length - this.renderTick : 0;
+    if (Math.abs(gap - this.presentGap) > 30) this.presentGap = gap;
+    else this.presentGap += (gap - this.presentGap) * (1 - Math.exp(-8 * dt));
+    this.presentTick = this.renderTick + this.presentGap;
+  }
+
+  private interpolate(i: number, out: Pose, dt: number): void {
     const kart = this.world.karts[i];
     const snaps = this.snaps;
     if (snaps.length === 0 || this.tickOffset === null) {
       copyPose(kart, out);
       return;
     }
-    const renderTick = performance.now() / 1000 * TICK_RATE + this.tickOffset - INTERP_TICKS;
+    const renderTick = this.renderTick;
     let a = snaps[0];
     let b = snaps[snaps.length - 1];
     for (let s = snaps.length - 1; s > 0; s--) {
@@ -390,17 +431,67 @@ export class RaceView {
       }
     }
     const span = b.tick - a.tick;
-    const t = span > 0 ? Math.max(0, Math.min(1.2, (renderTick - a.tick) / span)) : 1;
+    const t = span > 0 ? Math.max(0, Math.min(1, (renderTick - a.tick) / span)) : 1;
     const base = i * F;
     const get = (snap: Snap, f: number) => snap.karts[base + f];
     out.dist = get(a, FIELD.dist) + (get(b, FIELD.dist) - get(a, FIELD.dist)) * t;
     out.d = get(a, FIELD.d) + (get(b, FIELD.d) - get(a, FIELD.d)) * t;
     out.z = Math.max(0, get(a, FIELD.z) + (get(b, FIELD.z) - get(a, FIELD.z)) * t);
-    out.heading = lerpAngle(get(a, FIELD.heading), get(b, FIELD.heading), Math.min(1, t));
-    out.slip = get(a, FIELD.slip) + (get(b, FIELD.slip) - get(a, FIELD.slip)) * Math.min(1, t);
+    out.heading = lerpAngle(get(a, FIELD.heading), get(b, FIELD.heading), t);
+    out.slip = get(a, FIELD.slip) + (get(b, FIELD.slip) - get(a, FIELD.slip)) * t;
+
+    // Carry it forward along its latest motion (measured between the two newest
+    // snapshots, so a spinning kart doesn't fly off along its nose).
+    const drawnAt = a.tick + span * t;
+    const ahead = Math.max(0, Math.min(MAX_LEAD_SECONDS, (this.presentTick - drawnAt) / TICK_RATE));
+    let vs = 0;
+    let vd = 0;
+    if (snaps.length > 1) {
+      const p = snaps[snaps.length - 2];
+      const q = snaps[snaps.length - 1];
+      const gap = (q.tick - p.tick) / TICK_RATE;
+      if (gap > 0) {
+        vs = (q.karts[base + FIELD.dist] - p.karts[base + FIELD.dist]) / gap;
+        vd = (q.karts[base + FIELD.d] - p.karts[base + FIELD.d]) / gap;
+      }
+    }
+    // Smoothed, so a kart that stops dead slows down on screen instead of jumping back.
+    const k = 1 - Math.exp(-10 * dt);
+    const lead = this.lead;
+    lead[i * 2] += (vs * ahead - lead[i * 2]) * k;
+    lead[i * 2 + 1] += (vd * ahead * 0.5 - lead[i * 2 + 1]) * k;
+    out.dist += lead[i * 2];
+    const edge = this.world.track.halfWidth - KART_RADIUS;
+    out.d = Math.max(-edge, Math.min(edge, out.d + lead[i * 2 + 1]));
   }
 
-  private draw(alpha: number): void {
+  /** Grab boxes and GPUs the moment your predicted kart touches them, ahead of the server's word. */
+  private predictPickups(): void {
+    const me = this.me;
+    const latest = this.latest;
+    if (!latest) return;
+    const track = this.world.track;
+    const touching = me && this.world.phase === Phase.Racing && !me.finished && me.stunT <= 0;
+    const s = me ? wrapS(track, me.dist) : 0;
+    const now = this.time;
+    for (let i = 0; i < track.itemBoxes.length; i++) {
+      const ready = latest.boxesReady[i] === 1;
+      if (!ready) this.boxHold[i] = 0;
+      else if (touching && this.boxHold[i] === 0 && touchesBox(me, s, track.itemBoxes[i])) this.boxHold[i] = now + PICKUP_HOLD_SECONDS;
+      // A hold that runs out without the server agreeing (someone beat you to it) gives the box back.
+      if (this.boxHold[i] !== 0 && now > this.boxHold[i] && !(touching && touchesBox(me, s, track.itemBoxes[i]))) this.boxHold[i] = 0;
+      this.boxesShown[i] = ready && this.boxHold[i] === 0 ? 1 : 0;
+    }
+    for (let i = 0; i < track.coins.length; i++) {
+      const ready = latest.coinsReady[i] === 1;
+      if (!ready) this.coinHold[i] = 0;
+      else if (touching && this.coinHold[i] === 0 && touchesCoin(me, s, track.coins[i])) this.coinHold[i] = now + PICKUP_HOLD_SECONDS;
+      if (this.coinHold[i] !== 0 && now > this.coinHold[i] && !(touching && touchesCoin(me, s, track.coins[i]))) this.coinHold[i] = 0;
+      this.coinsShown[i] = ready && this.coinHold[i] === 0 ? 1 : 0;
+    }
+  }
+
+  private draw(alpha: number, frameDt: number): void {
     const world = this.world;
     const track = world.track;
     const online = this.mode.kind === "online";
@@ -408,13 +499,14 @@ export class RaceView {
     const decay = Math.exp(-12 * (1 / 60));
     this.correction.dist *= decay;
     this.correction.d *= decay;
+    if (online) this.updateClock(frameDt);
 
     const point = new THREE.Vector3();
     for (let i = 0; i < world.karts.length; i++) {
       const kart = world.karts[i];
       const r = this.render[i];
       if (online && i !== you) {
-        this.interpolate(i, r);
+        this.interpolate(i, r, frameDt);
       } else {
         const p = this.prev[i];
         r.dist = p.dist + (kart.dist - p.dist) * alpha;
@@ -439,7 +531,9 @@ export class RaceView {
 
     this.drawMissiles();
 
-    this.trackScene.update(this.time, online ? this.latest?.boxesReady ?? null : this.localBoxes(), online ? this.latest?.coinsReady ?? null : this.localCoins(), this.kartNear);
+    if (online) this.predictPickups();
+    const live = online && this.latest;
+    this.trackScene.update(this.time, live ? this.boxesShown : online ? null : this.localBoxes(), live ? this.coinsShown : online ? null : this.localCoins(), this.kartNear);
 
     this.emitParticles(point);
     this.react();
@@ -479,8 +573,9 @@ export class RaceView {
     const world = this.world;
     const track = world.track;
     const online = this.mode.kind === "online";
+    // Missiles are drawn at your kart's moment too, so what you dodge is where it really is.
     const since = online && this.latest && this.tickOffset !== null
-      ? Math.max(0, Math.min(0.15, (performance.now() / 1000 * TICK_RATE + this.tickOffset - this.latest.header.tick) / TICK_RATE))
+      ? Math.max(0, Math.min(MAX_LEAD_SECONDS, (this.presentTick - this.latest.header.tick) / TICK_RATE))
       : 0;
     // Walk the source lists in place: no per-frame arrays.
     let used = 0;
@@ -771,7 +866,9 @@ export class RaceView {
     const world = this.world;
     const me = this.me;
     const order = world.order;
-    if (this.mode.kind === "online") order.sort((a, b) => (a.finished && b.finished ? a.finishTick - b.finishTick : a.finished ? -1 : b.finished ? 1 : b.dist - a.dist));
+    // Rank by where karts are drawn, so the place you see matches who's ahead on screen.
+    const shown = this.render;
+    if (this.mode.kind === "online") order.sort((a, b) => (a.finished && b.finished ? a.finishTick - b.finishTick : a.finished ? -1 : b.finished ? 1 : shown[b.slot].dist - shown[a.slot].dist));
     const focus = me ?? order[0];
     const place = order.indexOf(focus) + 1;
     const racingSeconds = (world.tick - COUNTDOWN_TICKS) / TICK_RATE;
@@ -808,6 +905,7 @@ export class RaceView {
       draft: focus.draft,
       nitro: focus.nitro,
       nitroLit: focus.nitroLit > 0,
+      nitroHeld: !!me && (this.inputs[me.slot].bits & InputBit.Nitro) !== 0,
       driftChain: focus.driftChain,
       passes: focus.passes,
     };

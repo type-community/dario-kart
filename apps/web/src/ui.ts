@@ -90,12 +90,12 @@ const howTo = `
     <ul>
       <li><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><p>Drive, steer and brake. Arrow keys work too</p></li>
       <li><span><kbd>Space</kbd></span><p>Hold in a turn to drift, let go to boost. Chain them</p></li>
-      <li><span><kbd>Shift</kbd></span><p>Nitro. Fill it by drifting, slipstreaming, close passes, tricks</p></li>
+      <li class="key-move"><span><kbd>Shift</kbd></span><p><strong>Hold to speed up.</strong> Drifts, slipstreams and close passes refill it</p></li>
       <li><span><kbd>E</kbd></span><p>Fire a missile from a box. Hold <kbd>Q</kbd> to fire backward</p></li>
       <li><span><kbd>W</kbd> on 2</span><p>Rocket start off the line</p></li>
       <li><span><kbd>Space</kbd> in air</span><p>Trick, then land it for a boost</p></li>
     </ul>
-    <p class="pad">Gamepad: RT drive, RB drift, A nitro, LB fire. Green GPUs add top speed; hits knock them loose.</p>
+    <p class="pad">Gamepad: RT drive, RB drift, A boost, LB fire. Green GPUs add top speed; hits knock them loose.</p>
   </section>
 `;
 

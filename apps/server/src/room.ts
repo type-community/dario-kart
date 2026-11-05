@@ -1,5 +1,5 @@
 import {
-  CHARACTERS, type ClientMessage, GapStats, type Input, KARTS, type LobbyPlayer, Phase,
+  CHARACTERS, type ClientMessage, GapStats, type Input, InputBit, KARTS, type LobbyPlayer, Phase,
   type RaceResult, type RaceSlot, SNAPSHOT_ACK_OFFSET, type ServerMessage, THEMES, TICK_RATE,
   type ThemeId, World, botInput, characterIndex, decodeInputs, encodeSnapshot, kartIndex,
   KICKED, PROTOCOL_VERSION, type NetReport, cleanName, cleanNetReport, kartById, makeInput, snapshotSize, validColor,
@@ -42,19 +42,28 @@ const MAX_RACE_TICKS = 15 * 60 * TICK_RATE;
 /** How long a race with nobody connected keeps running, waiting for a reconnect. */
 const ABANDON_MS = 30_000;
 const QUEUE_SIZE = 32;
+/** Hard cap on buffered inputs; anything older is already late. */
+const QUEUE_MAX = 6;
+/**
+ * Inputs arrive two per message, so a queue that never drains below this over
+ * a window is pure added lag (usually left over from a burst after a stall).
+ */
+const QUEUE_SLACK = 2;
+const QUEUE_WINDOW = 30;
+/** Taps that must survive an input being skipped. */
+const EDGE_BITS = InputBit.Item | InputBit.Drift;
 
-class InputQueue {
+export class InputQueue {
   private readonly ring: Input[] = Array.from({ length: QUEUE_SIZE }, makeInput);
   private head = 0;
   private size = 0;
+  private low = QUEUE_SIZE;
+  private taken = 0;
   readonly last: Input = makeInput();
 
   push(seq: number, steer: number, bits: number): void {
     if (seq <= this.last.seq && this.size === 0) return;
-    if (this.size === QUEUE_SIZE) {
-      this.head = (this.head + 1) % QUEUE_SIZE;
-      this.size--;
-    }
+    if (this.size === QUEUE_SIZE) this.skip();
     const slot = this.ring[(this.head + this.size) % QUEUE_SIZE];
     slot.seq = seq;
     slot.steer = steer;
@@ -62,11 +71,25 @@ class InputQueue {
     this.size++;
   }
 
-  /** Next input for this tick. Holds the last input when the client is late; skips ahead when it's far behind. */
+  /** Drop the oldest input, carrying its button taps into the next one. */
+  private skip(): void {
+    const dropped = this.ring[this.head];
+    this.head = (this.head + 1) % QUEUE_SIZE;
+    this.size--;
+    if (this.size > 0) this.ring[this.head].bits |= dropped.bits & EDGE_BITS;
+  }
+
+  /**
+   * Next input for this tick. Holds the last input when the client is late,
+   * skips ahead when it's far behind, and sheds standing lag a tick at a time.
+   */
   take(): Input {
-    while (this.size > 6) {
-      this.head = (this.head + 1) % QUEUE_SIZE;
-      this.size--;
+    while (this.size > QUEUE_MAX) this.skip();
+    this.low = Math.min(this.low, this.size);
+    if (++this.taken >= QUEUE_WINDOW) {
+      if (this.low > QUEUE_SLACK) this.skip();
+      this.low = QUEUE_SIZE;
+      this.taken = 0;
     }
     if (this.size > 0) {
       const next = this.ring[this.head];
@@ -82,6 +105,8 @@ class InputQueue {
   clear(): void {
     this.head = 0;
     this.size = 0;
+    this.low = QUEUE_SIZE;
+    this.taken = 0;
     this.last.seq = 0;
     this.last.steer = 0;
     this.last.bits = 0;
@@ -525,7 +550,8 @@ export class RaceRoom {
     const name = (slot: number) => this.slots[slot]?.name ?? "Someone";
     switch (event.type) {
       case "hit":
-        if (event.by < 0 || event.by === event.victim) return null;
+        // Bots fighting each other is noise in the feed.
+        if (event.by < 0 || event.by === event.victim || (this.slots[event.by]?.bot && this.slots[event.victim]?.bot)) return null;
         return `${name(event.by)} took down ${name(event.victim)} with an Outage Missile`;
       case "finish":
         return `${name(event.slot)} finished ${ordinal(event.place)}`;
