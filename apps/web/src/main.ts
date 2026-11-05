@@ -1,6 +1,6 @@
 import "./style.css";
 import {
-  CHARACTERS, KARTS, KICKED, LAPS, PROTOCOL_VERSION, type RaceResult, type RaceSlot, type ServerMessage, THEMES, TICK_RATE, type ThemeId, kartById,
+  CHARACTERS, KARTS, KICKED, LAPS, cleanName, PROTOCOL_VERSION, type RaceResult, type RaceSlot, type ServerMessage, THEMES, TICK_RATE, type ThemeId, kartById,
 } from "@dario-kart/sim";
 import { sound } from "./audio.ts";
 import { Controls } from "./controls.ts";
@@ -8,10 +8,13 @@ import { RaceView, type RaceSetup, Stage } from "./game.ts";
 import { Hud } from "./hud.ts";
 import { Net } from "./net.ts";
 import { KartPreview } from "./preview.ts";
-import { type LobbyState, type Profile, landingView, lobbyView, pauseView, resultsView } from "./ui.ts";
+import {
+  type LobbyState, type Profile, joiningView, landingView, lobbyView, pauseView, placeholderName, resultsView,
+} from "./ui.ts";
 
 type Screen =
   | { kind: "landing"; error: string }
+  | { kind: "joining"; code: string }
   | { kind: "lobby" }
   | { kind: "race"; paused: boolean }
   | { kind: "results"; results: ReadonlyArray<RaceResult>; slot: number; practice: boolean };
@@ -31,7 +34,7 @@ const tabId = sessionStorage.getItem("dk.id") ?? crypto.randomUUID();
 sessionStorage.setItem("dk.id", tabId);
 const profile: Profile = {
   id: tabId,
-  name: stored("name", ""),
+  name: cleanName(stored("name", ""), placeholderName()),
   character: stored("character", CHARACTERS[Math.floor(Math.random() * CHARACTERS.length)].id),
   kart: initialKart,
   primary: Number(stored("primary", String(kartById(initialKart).color))),
@@ -90,7 +93,7 @@ const practice = () => {
   const requested = new URLSearchParams(location.search).get("track");
   const theme = THEMES.find((t) => t.id === requested)?.id ?? THEMES[Math.floor(Math.random() * THEMES.length)].id;
   const slots: RaceSlot[] = [
-    { id: profile.id, name: profile.name || "You", character: profile.character, kart: profile.kart, primary: profile.primary, secondary: profile.secondary, bot: false },
+    { id: profile.id, name: profile.name, character: profile.character, kart: profile.kart, primary: profile.primary, secondary: profile.secondary, bot: false },
     ...Array.from({ length: 7 }, (_, i) => {
       const c = CHARACTERS[(i + 3) % CHARACTERS.length];
       const kart = KARTS[(i + 1) % KARTS.length];
@@ -113,11 +116,22 @@ const go = (next: Screen) => {
       if (!view || attractTheme === null) attract(THEMES[Math.floor(Math.random() * THEMES.length)].id);
       break;
     }
+    case "joining":
+      ui.innerHTML = joiningView(next.code);
+      break;
     case "lobby": {
       if (!lobby) return;
       const scroll = ui.scrollTop;
-      ui.innerHTML = lobbyView(lobby, profile);
+      // Lobby updates redraw everything; don't wipe out a name being typed.
+      const typing = document.activeElement?.id === "lobby-name" ? document.activeElement as HTMLInputElement : null;
+      ui.innerHTML = lobbyView(lobby, profile, nameSaved !== null);
       ui.scrollTop = scroll;
+      const nameInput = ui.querySelector<HTMLInputElement>("#lobby-name");
+      if (typing && nameInput) {
+        nameInput.value = typing.value;
+        nameInput.focus();
+        nameInput.setSelectionRange(typing.selectionStart, typing.selectionEnd);
+      }
       const slot = ui.querySelector<HTMLElement>("[data-preview]");
       if (slot) {
         preview.setLook(profile);
@@ -155,7 +169,7 @@ const newCode = () => {
 };
 
 const hello = () => ({
-  t: "hello" as const, v: PROTOCOL_VERSION, id: profile.id, name: profile.name || "Racer", character: profile.character, kart: profile.kart,
+  t: "hello" as const, v: PROTOCOL_VERSION, id: profile.id, name: profile.name, character: profile.character, kart: profile.kart,
   primary: profile.primary, secondary: profile.secondary,
 });
 
@@ -166,6 +180,7 @@ const join = (code: string, pushHistory = true) => {
     return;
   }
   if (pushHistory && new URLSearchParams(location.search).get("race") !== clean) history.pushState({ race: clean }, "", `?race=${clean}`);
+  go({ kind: "joining", code: clean });
   net.connect(clean, hello());
 };
 
@@ -208,7 +223,7 @@ window.addEventListener("unhandledrejection", (e) => reportError(String(e.reason
 const sendPick = () => {
   saveProfile();
   net.updateHello(hello());
-  net.send({ t: "pick", character: profile.character, kart: profile.kart, primary: profile.primary, secondary: profile.secondary });
+  net.send({ t: "pick", name: profile.name, character: profile.character, kart: profile.kart, primary: profile.primary, secondary: profile.secondary });
   if (screen.kind === "lobby") go({ kind: "lobby" });
 };
 
@@ -234,7 +249,7 @@ net.onMessage = (msg: ServerMessage) => {
         break;
       }
       lobby = { code: msg.code, players: msg.players, track: msg.track, bots: msg.bots, racing: msg.racing, you: msg.you };
-      if (screen.kind === "landing" || screen.kind === "lobby") go({ kind: "lobby" });
+      if (screen.kind === "landing" || screen.kind === "joining" || screen.kind === "lobby") go({ kind: "lobby" });
       else if (screen.kind === "race" && !practicing && !msg.racing) {
         // The server has no race (it was reset). Don't strand the player on a frozen race.
         go({ kind: "lobby" });
@@ -290,13 +305,39 @@ const notice = (text: string) => {
 const readName = () => {
   const input = ui.querySelector<HTMLInputElement>("#name");
   if (input) {
-    profile.name = input.value.trim().slice(0, 16);
+    profile.name = cleanName(input.value, profile.name);
     saveProfile();
   }
 };
 
+/**
+ * Rename from the lobby. An empty box keeps the old name. Runs on Enter and on
+ * blur (Chrome fires "change" before the form's submit, and the redraw drops
+ * that submit, so both paths end up here).
+ */
+let nameSaved: ReturnType<typeof setTimeout> | null = null;
+const commitLobbyName = () => {
+  const input = ui.querySelector<HTMLInputElement>("#lobby-name");
+  if (!input) return;
+  const name = cleanName(input.value, profile.name);
+  input.value = name;
+  if (name === profile.name && lobby?.players.find((p) => p.key === lobby?.you)?.name === name) return;
+  profile.name = name;
+  if (nameSaved) clearTimeout(nameSaved);
+  nameSaved = setTimeout(() => {
+    nameSaved = null;
+    if (screen.kind === "lobby") go({ kind: "lobby" });
+  }, 1800);
+  sendPick();
+  ui.querySelector<HTMLInputElement>("#lobby-name")?.blur();
+};
+
 ui.addEventListener("submit", (e) => {
   e.preventDefault();
+  if ((e.target as HTMLElement).dataset.form === "name") {
+    commitLobbyName();
+    return;
+  }
   readName();
   join(newCode());
 });
@@ -313,6 +354,10 @@ ui.addEventListener("click", (e) => {
     practice();
   } else if (action === "start") {
     net.send({ t: "start" });
+  } else if (action === "rename") {
+    const input = ui.querySelector<HTMLInputElement>("#lobby-name");
+    input?.focus();
+    input?.select();
   } else if (action === "kick" && target.dataset.key) {
     net.send({ t: "kick", key: target.dataset.key });
   } else if (action === "copy" && lobby) {
@@ -364,6 +409,7 @@ ui.addEventListener("input", (e) => {
 ui.addEventListener("change", (e) => {
   const input = e.target as HTMLInputElement;
   if (input.id === "bots" && lobby) net.send({ t: "settings", track: lobby.track, bots: Number(input.value) });
+  else if (input.id === "lobby-name") commitLobbyName();
   else if (input.dataset.paintInput) {
     profile[input.dataset.paintInput as "primary" | "secondary"] = Number.parseInt(input.value.slice(1), 16);
     sendPick();
@@ -389,7 +435,7 @@ window.addEventListener("keydown", (e) => {
 window.addEventListener("popstate", () => {
   const params = new URLSearchParams(location.search);
   const code = params.get("race");
-  if (code && lobby?.code !== code.toUpperCase() && profile.name) join(code, false);
+  if (code && lobby?.code !== code.toUpperCase()) join(code, false);
   else if (!code && !params.has("practice") && screen.kind !== "landing") goHome("", false);
 });
 
@@ -401,7 +447,7 @@ const loop = (now: number) => {
   last = now;
   requestAnimationFrame(loop);
   // Behind the menus the race is just a backdrop: 30 fps at low resolution is plenty.
-  const menu = screen.kind === "landing" || screen.kind === "lobby";
+  const menu = screen.kind === "landing" || screen.kind === "joining" || screen.kind === "lobby";
   stage.setMenuMode(menu);
   if (menu) {
     menuDt += dt;
@@ -420,11 +466,10 @@ requestAnimationFrame(loop);
 
 const params = new URLSearchParams(location.search);
 const nameParam = params.get("name");
-if (nameParam) {
-  profile.name = nameParam.slice(0, 16);
-  saveProfile();
-}
+if (nameParam) profile.name = cleanName(nameParam, profile.name);
+saveProfile();
 go({ kind: "landing", error: "" });
 const initial = params.get("race");
+// An invite link goes straight to the lobby; the name can be changed there.
 if (params.has("practice")) practice();
-else if (initial && profile.name) join(initial, false);
+else if (initial) join(initial, false);

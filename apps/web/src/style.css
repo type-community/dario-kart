@@ -203,6 +203,30 @@ button {
   flex-basis: 100%;
 }
 
+/* ---------- joining ---------- */
+
+.joining {
+  min-height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 0.5rem;
+  background: rgba(17, 20, 42, 0.7);
+}
+
+.joining p {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 800;
+  font-style: italic;
+  font-size: var(--step-2);
+}
+
+.joining strong {
+  color: var(--hazard);
+  letter-spacing: 0.08em;
+}
+
 /* ---------- results ---------- */
 
 .results {
@@ -1162,6 +1186,80 @@ button {
   font-size: var(--step--1);
   color: var(--wafer-dim);
   margin-left: 0.4rem;
+}
+
+/* Your name */
+
+.name-form {
+  display: grid;
+  gap: 0.3rem;
+  flex: none;
+}
+
+.name-form label {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: var(--step-1);
+  line-height: 1;
+}
+
+.name-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.name-row input {
+  flex: 1;
+  min-width: 0;
+  background: var(--asphalt-deep);
+  border: 2px solid var(--asphalt-line);
+  padding: 0.45rem 0.7rem;
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: var(--step-2);
+  line-height: 1;
+}
+
+.name-row input:focus {
+  border-color: var(--hazard);
+  outline: none;
+}
+
+.name-row .go {
+  font-size: var(--step-1);
+  padding: 0.45rem 1.2rem;
+}
+
+.name-hint {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--wafer-dim);
+}
+
+.name-form.unnamed label,
+.name-form.unnamed .name-hint {
+  color: var(--hazard);
+}
+
+.name-form.unnamed input {
+  border-color: var(--hazard);
+  animation: name-nudge 1.6s ease-in-out infinite;
+}
+
+.name-form.unnamed input:focus {
+  animation: none;
+}
+
+@keyframes name-nudge {
+  50% {
+    box-shadow: 0 0 0 4px rgba(255, 201, 60, 0.35);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .name-form.unnamed input {
+    animation: none;
+  }
 }
 
 /* Your kart */

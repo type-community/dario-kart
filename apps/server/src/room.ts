@@ -2,7 +2,7 @@ import {
   CHARACTERS, type ClientMessage, GapStats, type Input, KARTS, type LobbyPlayer, Phase,
   type RaceResult, type RaceSlot, SNAPSHOT_ACK_OFFSET, type ServerMessage, THEMES, TICK_RATE,
   type ThemeId, World, botInput, characterIndex, decodeInputs, encodeSnapshot, kartIndex,
-  KICKED, PROTOCOL_VERSION, type NetReport, cleanNetReport, kartById, makeInput, snapshotSize, validColor,
+  KICKED, PROTOCOL_VERSION, type NetReport, cleanName, cleanNetReport, kartById, makeInput, snapshotSize, validColor,
 } from "@dario-kart/sim";
 
 /**
@@ -108,9 +108,6 @@ interface Player {
 const log = (event: string, fields: Record<string, unknown>): void => {
   console.log(JSON.stringify({ event, ...fields }));
 };
-
-const clampName = (name: unknown): string =>
-  (typeof name === "string" ? name : "").replace(/[^\p{L}\p{N} _.-]/gu, "").trim().slice(0, 16) || "Racer";
 
 const validCharacter = (id: unknown): string =>
   CHARACTERS.some((c) => c.id === id) ? (id as string) : CHARACTERS[0].id;
@@ -237,7 +234,7 @@ export class RaceRoom {
           primary: 0,
           secondary: 0,
         };
-        info.name = clampName(msg.name);
+        info.name = cleanName(msg.name);
         info.character = validCharacter(msg.character);
         info.kart = validKart(msg.kart);
         info.primary = validColor(msg.primary, kartById(info.kart).color);
@@ -260,6 +257,7 @@ export class RaceRoom {
       case "pick": {
         const player = this.players.get(conn);
         if (!player) return;
+        if (msg.name !== undefined) player.info.name = cleanName(msg.name);
         player.info.character = validCharacter(msg.character);
         player.info.kart = validKart(msg.kart);
         player.info.primary = validColor(msg.primary, player.info.primary);
