@@ -272,6 +272,34 @@ describe("fun mechanics", () => {
     expect(countdownWith(-1).startResult).toBe(0);
   });
 
+  test("a client predicts GO and the rocket start the same as the server", () => {
+    // The server steps everyone; the client counts down alone with predictOne.
+    for (const pressAt of [15, 40, 170, -1]) {
+      const server = new World({ theme: "sf", seed: 8, racers: racers(2) });
+      const client = new World({ theme: "sf", seed: 8, predict: true, racers: racers(2) });
+      const inputs = server.karts.map(() => makeInput());
+      for (let t = 0; t < 240; t++) {
+        inputs[0].bits = server.phase === Phase.Countdown ? (server.phaseTicks <= pressAt ? InputBit.Throttle : 0) : InputBit.Throttle;
+        server.step(inputs);
+        client.predictOne(client.karts[0], inputs[0]);
+      }
+      expect(client.phase).toBe(Phase.Racing);
+      expect(client.karts[0].startResult).toBe(server.karts[0].startResult);
+      expect(client.karts[0].dist).toBeCloseTo(server.karts[0].dist, 3);
+    }
+  });
+
+  test("every kart is a different machine", () => {
+    const kinds = new Set(KARTS.map((k) => k.chassis.kind));
+    expect(kinds.size).toBe(KARTS.length);
+    for (const k of KARTS) expect(k.speed + k.handling + k.reliability + k.durability).toBe(28);
+    const world = new World({ theme: "sf", seed: 3, racers: KARTS.map((_, i) => ({ kart: i, character: 0, bot: true })) });
+    const by = (id: string) => world.karts[KARTS.findIndex((k) => k.id === id)];
+    expect(by("grok").maxSpeed).toBeGreaterThan(by("qwen").maxSpeed);
+    expect(by("qwen").accel).toBeGreaterThan(by("grok").accel * 1.5);
+    expect(by("astra").mass).toBeGreaterThan(by("qwen").mass * 2);
+  });
+
   test("slipstream tows you and fills the Compute meter", () => {
     const world = new World({ theme: "nyc", seed: 4, racers: racers(2) });
     const inputs = world.karts.map(() => makeInput());

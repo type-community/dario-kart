@@ -2,8 +2,14 @@ import {
   BoostKind, DRIFT_TIER1, DRIFT_TIER2, DRIFT_TIER3, MAX_GPUS, NITRO_MIN, SlowFlag, ItemKind, type Track,
 } from "@dario-kart/sim";
 
-const GLYPHS: Record<number, string> = {
-  [ItemKind.Missile]: "🚀",
+/** Item icons, drawn to match the 3D missile. */
+const ICONS: Record<number, string> = {
+  [ItemKind.Missile]: `<svg viewBox="0 0 64 64" aria-label="Outage Missile"><g transform="rotate(-40 32 32)">
+    <path d="M13 26 L-2 32 L13 38 Z" fill="#ff8a2a"/><path d="M13 29 L4 32 L13 35 Z" fill="#fff2c0"/>
+    <path d="M16 25 L9 14 L25 25 Z M16 39 L9 50 L25 39 Z" fill="#ff2d55"/>
+    <rect x="12" y="25" width="34" height="14" rx="3" fill="#f2f4f8"/>
+    <rect x="31" y="25" width="3.5" height="14" fill="#1b1d24"/>
+    <path d="M45 25 Q63 32 45 39 Z" fill="#ff2d55"/></g></svg>`,
 };
 
 const SLOW_CAUSES = [
@@ -121,6 +127,7 @@ export class Hud {
       <div class="hud-banner" data-k="banner" hidden><strong data-k="bannerTitle"></strong><span data-k="bannerSub"></span></div>
       <div class="hud-placepop" data-k="placepop" hidden></div>
       <div class="hud-wrongway" data-k="wrongway" hidden>Wrong way</div>
+      <div class="hud-incoming" data-k="incoming" hidden><b>!</b><span data-k="incomingText"></span></div>
       <div class="hud-tips" data-k="tips" hidden>
         <p>Press <kbd>W</kbd> as it hits 2 for a rocket start</p>
         <p>Hold <kbd>Space</kbd> in turns to drift, let go to boost</p>
@@ -214,6 +221,13 @@ export class Hud {
     this.mapTrack = canvas;
   }
 
+  private icon(key: string, item: number): void {
+    const value = String(item);
+    if (this.last[key] === value) return;
+    this.last[key] = value;
+    this.el[key].innerHTML = ICONS[item] ?? "";
+  }
+
   private set(key: string, value: string): void {
     if (this.last[key] === value) return;
     this.last[key] = value;
@@ -248,6 +262,12 @@ export class Hud {
     this.placeTimer = setTimeout(() => (el.hidden = true), 900);
   }
 
+  /** A missile is closing in on you. */
+  incoming(from: "behind" | "ahead" | null): void {
+    this.el.incoming.hidden = from === null;
+    if (from) this.set("incomingText", from === "behind" ? "Missile behind!" : "Missile ahead!");
+  }
+
   wrongWay(show: boolean): void {
     this.el.wrongway.hidden = !show;
   }
@@ -276,7 +296,7 @@ export class Hud {
     this.set("speed", String(Math.round(Math.abs(s.speed) * 3.6)));
     this.el.speed.classList.toggle("boosting", s.boosting);
 
-    this.set("glyph1", GLYPHS[s.item] ?? "");
+    this.icon("glyph1", s.item);
     this.set("count1", s.itemCount > 1 ? `×${s.itemCount}` : "");
     if (s.item !== ItemKind.None && this.lastItem === ItemKind.None && !s.spectating) {
       this.el.slot1.classList.remove("landed");
@@ -286,7 +306,7 @@ export class Hud {
     this.lastItem = s.item;
     this.el.slot1.classList.toggle("full", s.item !== ItemKind.None);
     this.el.slot2.hidden = !s.twin;
-    this.set("glyph2", GLYPHS[s.item2] ?? "");
+    this.icon("glyph2", s.item2);
     this.set("count2", s.item2Count > 1 ? `×${s.item2Count}` : "");
     // Nothing to show until you're holding something.
     this.el.items.hidden = s.spectating || s.item === ItemKind.None;

@@ -9,7 +9,7 @@ const DELAY = 7; // ticks of reaction time
 const out: Record<string, number> = { time: 0, wall: 0, slowZone: 0, drifts: 0, boosts: 0, maxChain: 0, chainSum: 0, overRot: 0 };
 let races = 0;
 for (const theme of THEMES) for (const seed of [11, 22, 33]) {
-  const world = new World({ theme: theme.id, seed, racers: [{ kart: 2, character: 0, bot: false }] });
+  const world = new World({ theme: theme.id, seed, racers: [{ kart: Number(process.env.KART ?? 2), character: 0, bot: false }] });
   const k = world.karts[0];
   const t = world.track;
   const input = makeInput();
