@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   BoostKind, CHAIN_WINDOW, CLOSE_PASS_WIDTH, InputBit, NITRO_CLOSE_PASS, NITRO_MIN, NITRO_SECONDS, SlowFlag, ItemKind, KARTS, Phase, THEMES, World, botInput, decodeInputs, decodeSnapshot, encodeInputs,
-  encodeSnapshot, GapStats, cleanNetReport, generateTrack, makeInput, snapshotSize, targetTrackLength,
+  encodeSnapshot, GapStats, cleanNetReport, generateTrack, makeInput, snapshotSize, targetTrackLength, TICK_RATE,
 } from "../src/index.ts";
 
 const racers = (n: number) =>
@@ -262,13 +262,21 @@ describe("fun mechanics", () => {
     return world.karts[0];
   };
 
+  test("the countdown lasts 5 seconds", () => {
+    const world = new World({ theme: "sf", seed: 8, racers: racers(2) });
+    const inputs = world.karts.map(() => makeInput());
+    let ticks = 0;
+    while (world.phase === Phase.Countdown) { world.step(inputs); ticks++; }
+    expect(ticks).toBe(5 * TICK_RATE);
+  });
+
   test("rocket start: press just before go", () => {
     const perfect = countdownWith(15);
     expect(perfect.startResult).toBe(2);
     expect(perfect.boostKind).toBe(BoostKind.Rocket);
     expect(countdownWith(40).startResult).toBe(1);
     // Holding the throttle through the whole countdown is a normal start, not a stall.
-    const early = countdownWith(170);
+    const early = countdownWith(290);
     expect(early.startResult).toBe(0);
     expect(early.stunT).toBe(0);
     expect(countdownWith(-1).startResult).toBe(0);
@@ -276,11 +284,11 @@ describe("fun mechanics", () => {
 
   test("a client predicts GO and the rocket start the same as the server", () => {
     // The server steps everyone; the client counts down alone with predictOne.
-    for (const pressAt of [15, 40, 170, -1]) {
+    for (const pressAt of [15, 40, 290, -1]) {
       const server = new World({ theme: "sf", seed: 8, racers: racers(2) });
       const client = new World({ theme: "sf", seed: 8, predict: true, racers: racers(2) });
       const inputs = server.karts.map(() => makeInput());
-      for (let t = 0; t < 240; t++) {
+      for (let t = 0; t < 360; t++) {
         inputs[0].bits = server.phase === Phase.Countdown ? (server.phaseTicks <= pressAt ? InputBit.Throttle : 0) : InputBit.Throttle;
         server.step(inputs);
         client.predictOne(client.karts[0], inputs[0]);
