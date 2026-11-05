@@ -1,4 +1,4 @@
-import { CHARACTERS, type Character, type ChassisKind, KARTS } from "@dario-kart/sim";
+import { type ChassisKind, KARTS } from "@dario-kart/sim";
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
@@ -105,7 +105,7 @@ const tub = (shape: Shape, width: number, lift: number) => {
     bevelEnabled: bevel > 0.01,
     bevelThickness: bevel,
     bevelSize: bevel,
-    bevelSegments: 3,
+    bevelSegments: 5,
     curveSegments: 4,
   });
   geo.rotateY(-Math.PI / 2);
@@ -117,13 +117,13 @@ const tire = (radius: number, width: number) => {
   const pts: THREE.Vector2[] = [];
   const r = radius;
   const w = width / 2;
-  for (let i = 0; i <= 8; i++) {
-    const a = (i / 8) * Math.PI;
-    pts.push(new THREE.Vector2(r - 0.1 + Math.sin(a) * 0.1, -w + (i / 8) * width));
+  for (let i = 0; i <= 12; i++) {
+    const a = (i / 12) * Math.PI;
+    pts.push(new THREE.Vector2(r - 0.1 + Math.sin(a) * 0.1, -w + (i / 12) * width));
   }
   pts.unshift(new THREE.Vector2(r * 0.62, -w));
   pts.push(new THREE.Vector2(r * 0.62, w));
-  return new THREE.LatheGeometry(pts, 20).rotateZ(Math.PI / 2);
+  return new THREE.LatheGeometry(pts, 32).rotateZ(Math.PI / 2);
 };
 
 type Parts = Record<BuildPart, THREE.BufferGeometry[]>;
@@ -167,7 +167,7 @@ const lights = (parts: Parts, z: number, y: number, spread: number, size = 0.3) 
 
 /** The open-wheel racer: sculpted tub, side pods, wings. */
 const buildRacer = (parts: Parts): void => {
-  const shape = RACER;
+  const shape = { ...RACER, length: RACER.length * .88, bevel: .16, wheel: RACER.wheel * 1.08 };
   const W = 1.34 * shape.width;
   const L = shape.length;
 
@@ -203,14 +203,14 @@ const buildRacer = (parts: Parts): void => {
   for (const side of [-1, 1]) {
     const x = side * (W / 2 + 0.16);
     if (shape.pods === "armored") {
-      parts.trim.push(at(new RoundedBoxGeometry(0.42, 0.42, 1.5 * L, 2, 0.05), x, 0.46, 0.05));
+      parts.trim.push(at(new RoundedBoxGeometry(0.42, 0.42, 1.5 * L, 4, 0.15), x, 0.46, 0.05));
       parts.carbon.push(at(new THREE.BoxGeometry(0.06, 0.3, 1.3 * L), x + side * 0.22, 0.46, 0.05));
     } else if (shape.pods === "twin") {
       parts.trim.push(at(new THREE.CapsuleGeometry(0.2, 1.25 * L, 4, 10), x, 0.5, -0.05, Math.PI / 2));
       parts.glow.push(at(new THREE.CircleGeometry(0.14, 12), x, 0.5, -0.05 - 0.83 * L, 0, Math.PI));
     } else {
       const wide = shape.pods === "wide" ? 0.44 : 0.34;
-      parts.trim.push(at(new RoundedBoxGeometry(wide, 0.34, 1.35 * L, 2, 0.1), x, 0.44, 0.05));
+      parts.trim.push(at(new RoundedBoxGeometry(wide, 0.34, 1.35 * L, 4, 0.14), x, 0.44, 0.05));
       parts.carbon.push(at(new THREE.BoxGeometry(wide * 0.7, 0.16, 0.08), x, 0.5, 0.05 + 0.69 * L));
     }
     parts.paint.push(at(new THREE.BoxGeometry(0.05, 0.06, 1.2 * L), x + side * (shape.pods === "wide" ? 0.23 : 0.18), 0.56, 0.05));
@@ -218,16 +218,16 @@ const buildRacer = (parts: Parts): void => {
 
   // Front splitter + wing with endplates.
   const fw = 2.1 * shape.splitter;
-  parts.carbon.push(at(new THREE.BoxGeometry(fw, 0.05, 0.42), 0, 0.2, 1.95 * L));
-  parts.trim.push(at(new THREE.BoxGeometry(fw * 0.96, 0.05, 0.16), 0, 0.27, 2.02 * L, -0.25));
-  for (const side of [-1, 1]) parts.trim.push(at(new THREE.BoxGeometry(0.05, 0.22, 0.5), side * fw / 2, 0.28, 1.95 * L));
+  parts.carbon.push(at(new RoundedBoxGeometry(fw, 0.09, 0.42, 3, 0.045), 0, 0.2, 1.95 * L));
+  parts.trim.push(at(new RoundedBoxGeometry(fw * 0.96, 0.09, 0.2, 3, 0.045), 0, 0.29, 2.02 * L, -0.25));
+  for (const side of [-1, 1]) parts.trim.push(at(new RoundedBoxGeometry(0.09, 0.22, 0.5, 3, 0.045), side * fw / 2, 0.28, 1.95 * L));
 
   // Rear wing.
   const rz = -1.32 * L;
   const wing = (y: number, span: number, chord: number, x = 0) => {
-    parts.trim.push(at(new THREE.BoxGeometry(span, 0.07, chord), x, y, rz, 0.12));
+    parts.trim.push(at(new RoundedBoxGeometry(span, 0.12, chord, 3, 0.055), x, y, rz, 0.12));
     for (const side of [-1, 1]) {
-      parts.carbon.push(at(new THREE.BoxGeometry(0.05, 0.36, chord + 0.12), x + side * span / 2, y - 0.08, rz));
+      parts.carbon.push(at(new RoundedBoxGeometry(0.09, 0.36, chord + 0.12, 3, 0.04), x + side * span / 2, y - 0.08, rz));
     }
   };
   if (shape.wing === "tall") {
@@ -241,7 +241,7 @@ const buildRacer = (parts: Parts): void => {
     wing(1.2, 0.8, 0.4, 0.55);
     for (const side of [-1, 1]) parts.carbon.push(at(new THREE.BoxGeometry(0.07, 0.4, 0.12), side * 0.55, 0.98, rz));
   } else if (shape.wing === "duck") {
-    parts.trim.push(at(new THREE.BoxGeometry(W * 0.95, 0.1, 0.32), 0, 0.92 + shape.hump * 0.8, rz + 0.05, -0.35));
+    parts.trim.push(at(new RoundedBoxGeometry(W * 0.95, 0.14, 0.34, 3, 0.06), 0, 0.92 + shape.hump * 0.8, rz + 0.05, -0.35));
   }
   if (shape.fin) {
     const fin = new THREE.Shape();
@@ -511,7 +511,7 @@ const buildParts = (modelId: string): Map<Part, THREE.BufferGeometry> => {
   const merged = new Map<Part, THREE.BufferGeometry>();
   for (const [part, list] of grouped) {
     const g = mergeGeometries(list, false);
-    g.computeVertexNormals();
+    // Preserve the source normals: recomputing after de-indexing makes rounded parts faceted.
     g.computeBoundingSphere();
     merged.set(part, g);
     for (const x of list) x.dispose();
@@ -545,7 +545,7 @@ export const paintMaterial = (color: number) =>
   }));
 
 const fixed: Record<Exclude<Part, "paint" | "trim">, () => THREE.Material> = {
-  dark: () => new THREE.MeshStandardMaterial({ color: 0x18191e, roughness: 0.6, metalness: 0.3 }),
+  dark: () => new THREE.MeshStandardMaterial({ color: 0x202232, roughness: 0.8, metalness: 0.1 }),
   chrome: () => new THREE.MeshStandardMaterial({ color: 0xe8ecf2, roughness: 0.14, metalness: 1 }),
   glow: () => new THREE.MeshBasicMaterial({ color: 0x3de0ff }),
   lights: () => new THREE.MeshBasicMaterial({ vertexColors: true }),
@@ -555,65 +555,6 @@ export const partMaterial = (part: Part, primary: number, secondary: number): TH
   if (part === "paint") return paintMaterial(primary);
   if (part === "trim") return paintMaterial(secondary);
   return cached(part, fixed[part]);
-};
-
-/* ---------------- driver ---------------- */
-
-const driverGeo = {
-  torso: new RoundedBoxGeometry(0.74, 0.56, 0.5, 2, 0.14),
-  arm: new THREE.CapsuleGeometry(0.11, 0.5, 3, 8).rotateX(Math.PI / 2.6),
-  head: new THREE.SphereGeometry(0.34, 18, 14),
-  hair: new THREE.SphereGeometry(0.36, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2.1),
-  bob: new THREE.SphereGeometry(0.38, 18, 12, 0, Math.PI * 2, 0, Math.PI / 1.45),
-  glasses: new THREE.BoxGeometry(0.46, 0.09, 0.08),
-};
-
-const DRIVER_HAIR: Record<string, "cap" | "bob" | "bald" | "volume"> = {
-  dario: "volume", elon: "cap", sam: "cap", sundar: "cap", mark: "cap", satya: "bald",
-  lisa: "bob", mira: "bob", jensen: "volume", demis: "cap",
-};
-
-const driverCache = new Map<string, THREE.BufferGeometry>();
-const driverMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.05 });
-
-const tinted = (geo: THREE.BufferGeometry, color: number, matrix: THREE.Matrix4): THREE.BufferGeometry => {
-  const g = (geo.index ? geo.toNonIndexed() : geo.clone()).applyMatrix4(matrix);
-  g.deleteAttribute("uv");
-  const c = new THREE.Color(color);
-  const colors = new Float32Array(g.attributes.position.count * 3);
-  for (let i = 0; i < colors.length; i += 3) colors.set([c.r, c.g, c.b], i);
-  g.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  return g;
-};
-
-/** The driver as one vertex-colored mesh: one draw call, shared per character. */
-export const buildDriver = (characterId: string): THREE.Mesh => {
-  const c: Character = CHARACTERS.find((x) => x.id === characterId) ?? CHARACTERS[0];
-  let geometry = driverCache.get(c.id);
-  if (!geometry) {
-    const m = new THREE.Matrix4();
-    const parts: THREE.BufferGeometry[] = [
-      tinted(driverGeo.torso, c.outfit, m.makeTranslation(0, 0.98, -0.18)),
-      tinted(driverGeo.head, c.skin, m.makeTranslation(0, 1.5, -0.12)),
-      ...[-1, 1].map((side) => tinted(driverGeo.arm, c.outfit, new THREE.Matrix4().makeTranslation(side * 0.36, 0.98, 0.18))),
-    ];
-    const style = DRIVER_HAIR[c.id] ?? "cap";
-    if (style !== "bald") {
-      const hm = new THREE.Matrix4().makeTranslation(0, style === "bob" ? 1.5 : 1.54, -0.15);
-      if (style === "volume") hm.multiply(new THREE.Matrix4().makeScale(1.12, 1.25, 1.1));
-      parts.push(tinted(style === "bob" ? driverGeo.bob : driverGeo.hair, c.hair, hm));
-    }
-    if (c.id === "satya" || c.id === "dario" || c.id === "mark") {
-      parts.push(tinted(driverGeo.glasses, 0x111111, new THREE.Matrix4().makeTranslation(0, 1.53, 0.2)));
-    }
-    geometry = mergeGeometries(parts, false);
-    for (const p of parts) p.dispose();
-    driverCache.set(c.id, geometry);
-  }
-  const mesh = new THREE.Mesh(geometry, driverMaterial);
-  mesh.scale.setScalar(0.88);
-  mesh.position.y = -0.08;
-  return mesh;
 };
 
 export const defaultPaint = (kartId: string): { primary: number; secondary: number } => {

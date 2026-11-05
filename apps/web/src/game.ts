@@ -9,13 +9,14 @@ import { sound } from "./audio.ts";
 import { EMOTES } from "./avatars.ts";
 import type { Controls } from "./controls.ts";
 import { Particles } from "./particles.ts";
+import { RaceEffects } from "./effects.ts";
+import { MissileVisual } from "./item-model.ts";
 import type { Hud, HudState, MapDot } from "./hud.ts";
 import type { Net } from "./net.ts";
 import {
   KartVisual, SPARK_COLORS, type TrackScene, buildTrackScene, makeBubble,
   placeOnTrack, trackPoint, trackPose,
 } from "./scene.ts";
-import { Effects, type MissileVisual, animateMissile, disposeMissile, makeMissile } from "./fx.ts";
 
 export class Stage {
   readonly renderer: THREE.WebGLRenderer;
@@ -153,8 +154,7 @@ export class RaceView {
   private readonly trackScene: TrackScene;
   private readonly visuals: KartVisual[];
   private readonly missiles: MissileVisual[] = [];
-  private readonly effects: Effects;
-  /** Where missiles were last frame, to spot new launches (snapshots don't say who fired). */
+  /** Last-frame positions identify launches when snapshots have no projectile IDs. */
   private missileWas: Array<{ dist: number; d: number }> = [];
   private missileNow: Array<{ dist: number; d: number }> = [];
   private warnBeepAt = 0;
@@ -202,17 +202,24 @@ export class RaceView {
   private finishedReported = false;
 
   // juice
-  private readonly sparks = new Particles(1600, 0.55, true);
+  private readonly sparks = new Particles(512, 0.55, true);
   private readonly confetti = new Particles(700, 0.5, false);
+  private readonly effects = new RaceEffects();
+  private trailAccumulator = 0;
+  private trailSteps = 0;
+  private hitPulse = 0;
   private shake = 0;
   private fovKick = 0;
   /** Camera pulls back while boosting, so speed reads as distance. */
   private camPull = 0;
   private readonly bubbles: Array<{ sprite: THREE.Sprite; parent: THREE.Object3D; until: number }> = [];
-  private readonly prevStun: Float32Array;
+  private readonly pendingHits: Uint8Array;
+  private readonly pendingSquashes: Uint8Array;
+  private readonly prevGiant: Uint8Array;
+  private readonly prevBoost: Uint8Array;
   private readonly prevAir: Uint8Array;
   private readonly watch = {
-    sec: 99, start: 0, boost: 0, gpus: 0, stun: 0, air: false, trick: 0, tier: 0, passes: 0,
+    sec: 99, start: 0, boost: 0, gpus: 0, air: false, trick: 0, tier: 0, passes: 0,
     lap: 1, place: 0, finished: false, wrongT: 0, lapStart: 0, bestLap: Infinity, itemCount: 0, item: 0,
   };
   private readonly speedLines = document.getElementById("speedlines") as HTMLCanvasElement | null;
@@ -234,9 +241,8 @@ export class RaceView {
     const theme = themeById(setup.track);
     this.trackScene = buildTrackScene(this.world.track, theme, stage.scene);
     // Whoever grabs a box or GPU, it pops instead of just vanishing.
-    this.trackScene.onPickup = (kind, at) => {
-      if (kind === "box") this.sparks.burst(at, 18, [0xffc93c, 0xff3d7f, 0x3de0ff, 0xb18cff], 5, 0.4, 0, 2);
-      else this.sparks.burst(at, 12, 0x9be22d, 4, 0.35, 0, 2);
+    this.trackScene.onPickup = (kind, at, up) => {
+      if (at.distanceToSquared(stage.camera.position) < 90 * 90) this.effects.pickup(at, up, kind === "box", reducedMotion.matches);
     };
     this.visuals = setup.slots.map((slot, i) => {
       const v = new KartVisual({
@@ -258,21 +264,21 @@ export class RaceView {
     this.coinHold = new Float32Array(this.world.track.coins.length);
     this.boxesShown = new Uint8Array(this.boxHold.length);
     this.coinsShown = new Uint8Array(this.coinHold.length);
-    for (let i = 0; i < 24; i++) {
-      const m = makeMissile();
-      m.root.visible = false;
+    for (let i = 0; i < this.world.missiles.length; i++) {
+      const m = new MissileVisual();
       stage.scene.add(m.root);
       this.missiles.push(m);
     }
-    this.effects = new Effects(stage.scene);
     hud?.setTrack(this.world.track);
-    this.prevStun = new Float32Array(this.world.karts.length);
+    this.pendingHits = new Uint8Array(this.world.karts.length);
+    this.pendingSquashes = new Uint8Array(this.world.karts.length);
+    this.prevGiant = new Uint8Array(this.world.karts.length);
+    this.prevBoost = new Uint8Array(this.world.karts.length);
     this.prevAir = new Uint8Array(this.world.karts.length);
-    stage.scene.add(this.sparks.points, this.confetti.points);
+    stage.scene.add(this.sparks.points, this.confetti.points, this.effects.root);
     if (mode.kind !== "attract") {
       sound.startMusic(setup.track);
       sound.setIntense(false);
-
     }
     if (mode.kind === "online") mode.net.onSnapshot = this.snapshotHandler;
     if (controls) controls.enabled = setup.you >= 0;
@@ -332,12 +338,14 @@ export class RaceView {
   }
 
   private describeLocal(event: World["events"][number]): void {
+    if (event.type === "hit") this.pendingHits[event.victim] = 1;
+    if (event.type === "squash") this.pendingSquashes[event.victim] = 1;
     if (!this.hud || this.mode.kind === "attract") return;
     const name = (slot: number) => (slot === this.setup.you ? "You" : this.setup.slots[slot]?.name ?? "Someone");
     // Bots fighting each other is noise; only hits a human was part of make the feed.
     const human = (slot: number) => !this.setup.slots[slot]?.bot;
-    if (event.type === "hit" && event.by >= 0 && event.by !== event.victim && (human(event.by) || human(event.victim))) {
-      this.hud.feed(`${name(event.by)} hit ${name(event.victim)}`);
+    if ((event.type === "hit" || event.type === "squash") && event.by >= 0 && event.by !== event.victim && (human(event.by) || human(event.victim))) {
+      this.hud.feed(`${name(event.by)} ${event.type === "squash" ? "squashed" : "hit"} ${name(event.victim)}`);
     } else if (event.type === "finish") {
       this.hud.feed(`${name(event.slot)} finished`);
     }
@@ -373,6 +381,16 @@ export class RaceView {
     else this.tickOffset += (target - this.tickOffset) * 0.05;
     this.lastSnapshotAt = performance.now();
 
+    // Health changes catch repeated hits during a spin-out, even if the stun timer barely changes.
+    // Compare authoritative snapshots, never the client's replayed prediction or the HUD text feed.
+    if (this.latest && snap.header.tick > this.latest.header.tick) {
+      for (let i = 0; i < this.world.karts.length; i++) {
+        const at = i * F;
+        if (snap.karts[at + FIELD.hp] !== this.latest.karts[at + FIELD.hp] ||
+            snap.karts[at + FIELD.stunT] > this.latest.karts[at + FIELD.stunT] + .2) this.pendingHits[i] = 1;
+        if (snap.karts[at + FIELD.squashT] > this.latest.karts[at + FIELD.squashT] + .2) this.pendingSquashes[i] = 1;
+      }
+    }
     this.latest = snap;
     this.snaps.push({ tick: snap.header.tick, karts: snap.karts });
     while (this.snaps.length > 24) this.snaps.shift();
@@ -514,7 +532,11 @@ export class RaceView {
     const track = world.track;
     const online = this.mode.kind === "online";
     const you = this.setup.you;
-    const decay = Math.exp(-12 * (1 / 60));
+    const effectDt = this.paused ? 0 : frameDt;
+    this.trailAccumulator += effectDt;
+    this.trailSteps = Math.min(4, Math.floor(this.trailAccumulator / DT));
+    this.trailAccumulator %= DT;
+    const decay = Math.exp(-12 * effectDt);
     this.correction.dist *= decay;
     this.correction.d *= decay;
     if (online) this.updateClock(frameDt);
@@ -540,10 +562,48 @@ export class RaceView {
       const v = this.visuals[i];
       placeOnTrack(track, r.dist, r.d, r.z, r.heading, v.root);
       point.copy(v.root.position);
+      this.up.set(0, 1, 0).applyQuaternion(v.root.quaternion);
+      const giant = kart.giantT > 0 ? 1 : 0;
+      if (giant && !this.prevGiant[i]) {
+        this.tmpA.copy(point).addScaledVector(this.up, .15);
+        if (point.distanceToSquared(this.stage.camera.position) < 90 * 90) this.effects.maxing(this.tmpA, this.up, reducedMotion.matches);
+        if (i === you && this.mode.kind !== "attract") {
+          sound.maxing();
+          this.hud?.calloutText("TOKEN MAXING!", "super");
+        }
+      }
+      this.prevGiant[i] = giant;
+      if (this.pendingSquashes[i]) {
+        this.pendingSquashes[i] = 0;
+        const distance = point.distanceTo(this.stage.camera.position);
+        this.tmpA.copy(point).addScaledVector(this.up, .15);
+        if (distance < 90) this.effects.squash(this.tmpA, this.up, reducedMotion.matches);
+        if (distance < 45 && this.mode.kind !== "attract") sound.squash(i === you ? 1 : .3);
+        if (i === you && this.mode.kind !== "attract") {
+          this.hitPulse = .55;
+          if (!reducedMotion.matches) this.shake = .85;
+        }
+      }
+      if (this.pendingHits[i]) {
+        this.pendingHits[i] = 0;
+        v.hit(this.time, reducedMotion.matches);
+        const distance = point.distanceTo(this.stage.camera.position);
+        if (distance < 90) {
+          this.up.set(0, 1, 0).applyQuaternion(v.root.quaternion);
+          this.tmpA.copy(point).addScaledVector(this.up, .9);
+          this.effects.impact(this.tmpA, this.up, reducedMotion.matches);
+          if (this.mode.kind !== "attract" && distance < 45) sound.hit(i === you ? 1 : Math.max(.08, .38 * (1 - distance / 45)));
+        }
+        if (i === you && this.mode.kind !== "attract") {
+          this.hitPulse = 1;
+          if (!reducedMotion.matches) this.shake = 1.2;
+        }
+      }
       v.apply({
-        speed: kart.speed, boostT: kart.boostT, stunT: kart.stunT,
+        speed: kart.speed, boostT: kart.boostT, boostKind: kart.boostKind, nitro: kart.nitroLit > 0, stunT: kart.stunT,
+        giantT: kart.giantT, squashT: kart.squashT,
         drifting: kart.drifting, driftCharge: kart.driftCharge, trickT: kart.trickT, slip: r.slip, time: this.time,
-        items: (kart.item !== ItemKind.None ? 1 : 0) + (kart.item2 !== ItemKind.None ? 1 : 0),
+        items: (kart.item === ItemKind.Missile ? 1 : 0) + (kart.item2 === ItemKind.Missile ? 1 : 0),
         showLabel: this.mode.kind !== "attract" && i !== you && point.distanceToSquared(this.stage.camera.position) > 144,
       });
     }
@@ -554,11 +614,11 @@ export class RaceView {
     const live = online && this.latest;
     this.trackScene.update(this.time, live ? this.boxesShown : online ? null : this.localBoxes(), live ? this.coinsShown : online ? null : this.localCoins(), this.kartNear);
 
-    this.emitParticles(point);
+    this.emitParticles();
     this.react();
-    this.sparks.update(1 / 60);
-    this.confetti.update(1 / 60);
-    this.effects.update(this.paused ? 0 : frameDt, this.stage.camera, this.stage.renderer.domElement.height);
+    this.sparks.update(effectDt);
+    this.confetti.update(effectDt);
+    this.effects.update(effectDt, reducedMotion.matches);
     for (let i = this.bubbles.length - 1; i >= 0; i--) {
       const b = this.bubbles[i];
       if (this.time > b.until) {
@@ -568,8 +628,9 @@ export class RaceView {
         this.bubbles.splice(i, 1);
       }
     }
-    this.updateCamera();
+    this.updateCamera(effectDt);
     this.drawSpeedLines();
+    this.hitPulse *= Math.exp(-effectDt * 9);
     this.updateHud();
     this.stage.render();
   }
@@ -610,17 +671,11 @@ export class RaceView {
     for (let i = 0; i < missileCount && used < this.missiles.length; i++) {
       const m = online ? netMissiles![i] : world.missiles[i];
       if (!online && !world.missiles[i].active) continue;
-      const visual = this.missiles[used++];
+      const visual = this.missiles[used++], mesh = visual.root;
       const dist = m.dist + Math.cos(m.heading) * 88 * since;
       const d = m.d + Math.sin(m.heading) * 88 * since;
-      visual.root.visible = true;
-      placeOnTrack(track, dist, d, 0.8, m.heading, visual.root);
-      animateMissile(visual, this.time, i);
-      if (!this.paused) this.effects.trail(visual);
+      placeOnTrack(track, dist, d, .8, m.heading, mesh);
       now.push({ dist, d });
-      // New this frame: nothing was near here last frame (a missile moves ~1.5 m a frame).
-      if (!this.missileWas.some((p) => Math.abs(p.dist - dist) < 6 && Math.abs(p.d - d) < 3)) this.effects.launch(visual.root.position);
-      // Is it coming for you? Behind and flying forward, or ahead and flying back.
       if (me && !me.finished) {
         let gap = (me.dist - dist) % L;
         if (gap > L / 2) gap -= L;
@@ -632,17 +687,26 @@ export class RaceView {
           threatAhead = gap < 0;
         }
       }
+      mesh.visible = mesh.position.distanceToSquared(this.stage.camera.position) < 150 * 150;
+      if (!mesh.visible) continue;
+      visual.update(this.time);
+      this.forward.set(0, 0, 1).applyQuaternion(mesh.quaternion);
+      this.up.set(0, 1, 0).applyQuaternion(mesh.quaternion);
+      if (!this.paused && !this.missileWas.some((p) => Math.abs(p.dist - dist) < 6 && Math.abs(p.d - d) < 3)) {
+        this.effects.launch(mesh.position, this.up);
+      }
+      for (let step = 0; step < this.trailSteps; step++) {
+        this.tmpA.copy(mesh.position).addScaledVector(this.forward, -1 - step * .45);
+        this.effects.trail(this.tmpA, this.forward, this.up, 0xffba59, "missile");
+      }
     }
-    for (let i = used; i < this.missiles.length; i++) {
-      this.missiles[i].root.visible = false;
-      this.missiles[i].last = null;
-    }
+    for (let i = used; i < this.missiles.length; i++) this.missiles[i].root.visible = false;
     this.missileNow = this.missileWas;
     this.missileWas = now;
     this.hud?.incoming(threat < Infinity ? (threatAhead ? "ahead" : "behind") : null);
-    if (threat < Infinity && this.time > this.warnBeepAt) {
+    if (!this.paused && threat < Infinity && this.time > this.warnBeepAt) {
       sound.warn(threat);
-      this.warnBeepAt = this.time + 0.1 + (threat / 80) * 0.45;
+      this.warnBeepAt = this.time + .1 + (threat / 80) * .45;
     }
   }
 
@@ -661,7 +725,8 @@ export class RaceView {
   }
 
   private readonly tmpA = new THREE.Vector3();
-  private readonly tmpB = new THREE.Vector3();
+  private readonly up = new THREE.Vector3();
+  private readonly forward = new THREE.Vector3();
 
   private readonly kartNear = (s: number, d: number): boolean => {
     const track = this.world.track;
@@ -675,7 +740,7 @@ export class RaceView {
     return false;
   };
 
-  private emitParticles(_scratch: THREE.Vector3): void {
+  private emitParticles(): void {
     const track = this.world.track;
     const cam = this.stage.camera.position;
     for (let i = 0; i < this.world.karts.length; i++) {
@@ -683,34 +748,36 @@ export class RaceView {
       const r = this.render[i];
       const root = this.visuals[i].root;
       if (root.position.distanceToSquared(cam) > 90 * 90) {
-        this.prevStun[i] = kart.stunT;
+        this.prevBoost[i] = kart.boostKind;
+        this.prevAir[i] = kart.z > .3 ? 1 : 0;
         continue;
       }
       const c = Math.cos(r.heading);
       const sn = Math.sin(r.heading);
-      if (kart.drifting && kart.z < 0.2) {
+      this.up.set(0, 1, 0).applyQuaternion(root.quaternion);
+      this.forward.set(0, 0, 1).applyQuaternion(root.quaternion);
+      if (kart.drifting && kart.z < .2) {
         const tier = kart.driftCharge >= 2.3 ? 3 : kart.driftCharge >= 1.4 ? 2 : kart.driftCharge >= 0.7 ? 1 : 0;
-        for (const side of [-1, 1]) {
-          trackPoint(track, r.dist - c * 1.1 - sn * side * 0.95, r.d - sn * 1.1 + c * side * 0.95, 0.2, this.tmpA);
-          this.sparks.emit(this.tmpA.x, this.tmpA.y, this.tmpA.z, (Math.random() - 0.5) * 4, 2 + Math.random() * 3, (Math.random() - 0.5) * 4, SPARK_COLORS[tier], 0.35, 14);
+        for (let step = 0; step < this.trailSteps; step++) for (const side of [-1, 1]) {
+          trackPoint(track, r.dist - c * (1.1 + step * .2) - sn * side * .95, r.d - sn * (1.1 + step * .2) + c * side * .95, .2, this.tmpA);
+          this.effects.trail(this.tmpA, this.forward, this.up, SPARK_COLORS[tier], "drift");
         }
       }
       if (kart.boostT > 0) {
         trackPoint(track, r.dist - c * 2.3, r.d - sn * 2.3, 0.5 + r.z, this.tmpA);
         const nitro = kart.nitroLit > 0;
         const color = kart.boostKind === BoostKind.UltraDrift ? 0xb18cff : nitro ? 0x7af0ff : 0x3de0ff;
-        this.sparks.emit(this.tmpA.x, this.tmpA.y, this.tmpA.z, (Math.random() - 0.5) * 2, Math.random() * 2, (Math.random() - 0.5) * 2, color, 0.3);
-      }
-      if (kart.stunT > this.prevStun[i] + 0.3) {
-        this.effects.explode(root.position, this.tmpB.set(0, 1, 0).applyQuaternion(root.quaternion));
+        for (let step = 0; step < this.trailSteps; step++) this.effects.trail(this.tmpA, this.forward, this.up, color, "boost");
+        if (kart.boostKind !== this.prevBoost[i]) this.effects.boost(this.tmpA, this.up, color);
       }
       const air = kart.z > 0.3 ? 1 : 0;
       if (this.prevAir[i] && !air) {
         this.tmpA.copy(root.position);
-        this.sparks.burst(this.tmpA, 14, 0xd7dce6, 6, 0.4, 6);
+        this.tmpA.addScaledVector(this.up, .12);
+        this.effects.landing(this.tmpA, this.up);
       }
       this.prevAir[i] = air;
-      this.prevStun[i] = kart.stunT;
+      this.prevBoost[i] = kart.boostKind;
     }
   }
 
@@ -756,11 +823,6 @@ export class RaceView {
       this.sparks.burst(this.tmpA, 20, 0x76b900, 10, 0.8, 18, 6);
     }
     w.gpus = me.gpus;
-    if (me.stunT > w.stun + 0.3) {
-      sound.hit();
-      this.shake = 1.2;
-    }
-    w.stun = me.stunT;
     const air = me.z > 0.3;
     if (w.air && !air) {
       sound.land();
@@ -776,7 +838,7 @@ export class RaceView {
     if (tier > w.tier) sound.driftTier(tier);
     w.tier = tier;
     if (me.item && !w.item) sound.itemLand();
-    if (w.item === ItemKind.Missile && (me.itemCount < w.itemCount || me.item === ItemKind.None)) sound.fire();
+    if (w.item === ItemKind.Missile && (me.itemCount < w.itemCount || me.item !== w.item)) sound.fire();
     w.item = me.item;
     w.itemCount = me.itemCount;
     if (me.passes > w.passes) sound.whoosh();
@@ -832,24 +894,33 @@ export class RaceView {
       canvas.width = w;
       canvas.height = h;
     }
-    const intensity = focus && !this.paused
+    const intensity = focus && !this.paused && !reducedMotion.matches
       ? Math.max(0, Math.min(1, (focus.speed - 36) / 30)) + (focus.boostT > 0 ? 0.6 : 0) + (focus.nitroLit ? 0.3 : 0) + focus.draft * 0.25
       : 0;
     if (this.speedLinesDrawn) ctx.clearRect(0, 0, w, h);
-    this.speedLinesDrawn = intensity > 0;
+    this.speedLinesDrawn = intensity > 0 || this.hitPulse > .01;
+    if (this.hitPulse > .01) {
+      const gradient = ctx.createRadialGradient(w / 2, h / 2, h * .3, w / 2, h / 2, Math.max(w, h) * .65);
+      gradient.addColorStop(0, "rgba(255,95,112,0)");
+      gradient.addColorStop(1, `rgba(255,95,112,${this.hitPulse * (reducedMotion.matches ? .10 : .32)})`);
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, w, h);
+    }
     if (!focus || intensity <= 0) return;
     const cx = w / 2;
     const cy = h * 0.46;
-    const count = Math.floor(30 + intensity * 50);
+    const count = Math.floor(18 + intensity * 28);
     ctx.lineCap = "round";
     for (let i = 0; i < count; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const r0 = Math.max(w, h) * (0.32 + Math.random() * 0.25);
-      const len = (40 + Math.random() * 160 * intensity) * scale;
+      const a = i * 2.399963;
+      const phase = (this.time * (1.2 + intensity * .35) + i * .618034) % 1;
+      const r0 = Math.max(w, h) * (.3 + phase * .35);
+      const len = (30 + phase * 100 * intensity) * scale;
       const cos = Math.cos(a);
       const sin = Math.sin(a);
-      ctx.strokeStyle = focus.boostT > 0 ? `rgba(61,224,255,${0.12 + 0.25 * Math.random() * intensity})` : `rgba(255,255,255,${0.08 + 0.18 * Math.random() * intensity})`;
-      ctx.lineWidth = (1 + Math.random() * 2.5) * scale;
+      const opacity = Math.sin(phase * Math.PI) * Math.min(.34, intensity * .18);
+      ctx.strokeStyle = focus.boostT > 0 ? `rgba(105,235,255,${opacity})` : `rgba(255,255,255,${opacity})`;
+      ctx.lineWidth = (1 + (i % 3) * .7) * scale;
       ctx.beginPath();
       ctx.moveTo(cx + cos * r0, cy + sin * r0);
       ctx.lineTo(cx + cos * (r0 + len), cy + sin * (r0 + len));
@@ -857,7 +928,7 @@ export class RaceView {
     }
   }
 
-  private updateCamera(): void {
+  private updateCamera(dt: number): void {
     const world = this.world;
     const camera = this.stage.camera;
     let target = this.setup.you;
@@ -872,33 +943,34 @@ export class RaceView {
     const kart = world.karts[target];
     const track = world.track;
     const attract = this.mode.kind === "attract";
-    const pullTarget = attract ? 0 : kart.nitroLit ? 1.8 : kart.boostT > 0 ? 1.1 : 0;
-    this.camPull += (pullTarget - this.camPull) * (pullTarget > this.camPull ? 0.06 : 0.03);
+    const pullTarget = attract || reducedMotion.matches ? 0 : kart.nitroLit ? 1.8 : kart.boostT > 0 ? 1.1 : 0;
+    this.camPull += (pullTarget - this.camPull) * (1 - Math.exp(-(pullTarget > this.camPull ? 3.7 : 1.8) * dt));
+    const grown = kart.giantT > 0 ? this.visuals[target].body.scale.x - 1 : 0;
     const tall = this.visuals[target].height;
-    const back = attract ? 11 : 7.2 + this.camPull + tall * 1.2;
-    const height = attract ? 4.2 : 3.1 - this.camPull * 0.3 + tall;
+    const back = (attract ? 11 : 7.2 + this.camPull + tall * 1.2) + grown * 3.5;
+    const height = (attract ? 4.2 : 3.1 - this.camPull * 0.3 + tall) + grown * 1.9;
     const sideways = attract ? Math.sin(this.time * 0.15) * 7 : 0;
     const heading = r.heading - (attract ? 0 : r.slip * 0.4);
     const desired = trackPoint(track, r.dist - Math.cos(heading) * back, r.d - Math.sin(heading) * back + sideways, r.z + height, this.camDesired);
-    const look = trackPoint(track, r.dist + Math.cos(heading) * 6, r.d + Math.sin(heading) * 6, r.z + 1.2 + tall * 0.6, this.camTarget);
+    const look = trackPoint(track, r.dist + Math.cos(heading) * 6, r.d + Math.sin(heading) * 6, r.z + 1.2 + tall * .6 + grown * 1.4, this.camTarget);
     if (!this.camReady || this.camPos.distanceTo(desired) > 60) {
       this.camPos.copy(desired);
       this.camLook.copy(look);
       this.camReady = true;
     }
-    const k = 1 - Math.exp(-(attract ? 3 : 9) / 60);
+    const k = 1 - Math.exp(-(attract ? 3 : 9) * dt);
     this.camPos.lerp(desired, k);
     this.camLook.lerp(look, Math.min(1, k * 1.6));
     const frame = trackPose(track, r.dist, r.d, r.z);
-    this.camUp.lerp(this.camDesired.set(frame.ux, frame.uy, frame.uz), 1 - Math.exp(-6 / 60)).normalize();
+    this.camUp.lerp(this.camDesired.set(frame.ux, frame.uy, frame.uz), 1 - Math.exp(-6 * dt)).normalize();
     camera.position.copy(this.camPos);
-    if (this.shake > 0.01) {
-      const amp = this.shake * 0.35;
-      camera.position.x += (Math.random() - 0.5) * amp;
-      camera.position.y += (Math.random() - 0.5) * amp;
-      camera.position.z += (Math.random() - 0.5) * amp;
+    if (this.shake > .01 && !reducedMotion.matches) {
+      const amp = this.shake * .13;
+      camera.position.x += Math.sin(this.time * 83) * amp;
+      camera.position.y += Math.cos(this.time * 97) * amp * .7;
+      camera.position.z += Math.sin(this.time * 71 + 1.3) * amp * .5;
     }
-    this.shake *= Math.exp(-6 / 60);
+    this.shake *= Math.exp(-12 * dt);
     // Near top speed the camera hums: a fast, small, smooth shudder rather than random jitter.
     const hum = attract || reducedMotion.matches ? 0 : Math.max(0, Math.min(1, (kart.speed - kart.maxSpeed * 0.8) / (kart.maxSpeed * 0.5)));
     if (hum > 0) {
@@ -907,9 +979,9 @@ export class RaceView {
     }
     camera.up.copy(this.camUp);
     camera.lookAt(this.camLook);
-    this.fovKick *= Math.exp(-3 / 60);
-    const fov = 64 + Math.min(32, Math.max(0, kart.speed) * 0.36) + (kart.boostT > 0 ? 7 : 0) + (kart.nitroLit ? 4 : 0) + this.fovKick;
-    const nextFov = camera.fov + (fov - camera.fov) * 0.08;
+    this.fovKick *= Math.exp(-5 * dt);
+    const fov = reducedMotion.matches ? 70 : 64 + Math.min(26, Math.max(0, kart.speed) * .32) + (kart.boostT > 0 ? 5 : 0) + (kart.nitroLit ? 3 : 0) + this.fovKick;
+    const nextFov = camera.fov + (fov - camera.fov) * (1 - Math.exp(-5 * dt));
     if (Math.abs(nextFov - camera.fov) > 0.01) {
       camera.fov = nextFov;
       camera.updateProjectionMatrix();
@@ -953,6 +1025,7 @@ export class RaceView {
       item2: focus.item2,
       item2Count: focus.item2Count,
       twin: focus.perk === "twin-engine",
+      giantT: focus.giantT,
       countdown: world.phase === Phase.Countdown ? world.phaseTicks / TICK_RATE : 0,
       racing: world.phase !== Phase.Countdown,
       status,
@@ -977,9 +1050,15 @@ export class RaceView {
 
   dispose(): void {
     this.trackScene.dispose();
-    this.stage.scene.remove(this.sparks.points, this.confetti.points);
+    this.stage.scene.remove(this.sparks.points, this.confetti.points, this.effects.root);
     this.sparks.dispose();
     this.confetti.dispose();
+    this.effects.dispose();
+    for (const b of this.bubbles) {
+      b.sprite.material.map?.dispose();
+      b.sprite.material.dispose();
+    }
+    this.bubbles.length = 0;
     if (this.mode.kind !== "attract") {
 
       sound.stopMusic();
@@ -991,9 +1070,8 @@ export class RaceView {
     }
     for (const m of this.missiles) {
       this.stage.scene.remove(m.root);
-      disposeMissile(m);
+      m.dispose();
     }
-    this.effects.dispose();
     // Only unhook our own handler: on a reconnect the replacement view is already attached.
     if (this.mode.kind === "online" && this.mode.net.onSnapshot === this.snapshotHandler) this.mode.net.onSnapshot = () => {};
     if (this.controls) this.controls.enabled = false;

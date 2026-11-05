@@ -8,6 +8,12 @@ export const DT = 1 / TICK_RATE;
 export const LAPS = 2;
 export const COUNTDOWN_TICKS = 3 * TICK_RATE;
 export const KART_RADIUS = 1.0;
+export const TOKEN_MAXING_SECONDS = 8;
+export const TOKEN_MAXING_SCALE = 1.85;
+export const TOKEN_MAXING_SPEED_MULTIPLIER = 1.1;
+export const SQUASH_SECONDS = 1.2;
+/** Time to drive clear after recovering, even if the giant is still overlapping. */
+export const SQUASH_GRACE_SECONDS = 1;
 /** Once someone finishes, everyone else has this long before the race is called. */
 export const FINISH_GRACE_TICKS = 20 * TICK_RATE;
 const GRAVITY = 34;
@@ -130,7 +136,7 @@ export const STAT = {
   stunPerDurability: 0.075,
 };
 /** Why a kart is slower than it wants to be, so the HUD can always say. */
-export const SlowFlag = { Wall: 1, SlowZone: 2, Hit: 4 } as const;
+export const SlowFlag = { Wall: 1, SlowZone: 2, Hit: 4, Squashed: 8 } as const;
 export const BoostKind = { None: 0, Pad: 1, Drift: 2, SuperDrift: 3, Landing: 4, Nitro: 5, UltraDrift: 6, Trick: 8, Rocket: 9 } as const;
 const MISSILE_SPEED = 88;
 const BOX_RESPAWN_TICKS = 2 * TICK_RATE;
@@ -175,6 +181,9 @@ export class Kart {
   speed = 0;
   boostT = 0;
   stunT = 0;
+  giantT = 0;
+  squashT = 0;
+  squashGuardT = 0;
   wallT = 0;
   slowFlags = 0;
   airT = 0;
@@ -249,7 +258,7 @@ export class Kart {
  */
 export const KART_NET_FIELDS = [
   "dist", "d", "z", "vz", "heading", "slip", "speed", "kickV",
-  "boostT", "boostKind", "stunT", "slowFlags", "airT",
+  "boostT", "boostKind", "stunT", "giantT", "squashT", "squashGuardT", "slowFlags", "airT",
   "drifting", "driftDir", "driftCharge", "hp", "gpus", "draft", "nitro", "nitroLit", "driftChain", "chainT", "passes", "passT",
   "trickT", "trickPending", "startHold", "startResult",
   "item", "itemCount", "item2", "item2Count", "finishTick", "prevBits",
@@ -268,6 +277,7 @@ export class Missile {
 
 export type GameEvent =
   | { readonly type: "hit"; readonly victim: number; readonly by: number }
+  | { readonly type: "squash"; readonly victim: number; readonly by: number }
   | { readonly type: "item"; readonly slot: number; readonly item: number }
   | { readonly type: "use"; readonly slot: number; readonly item: number }
   | { readonly type: "finish"; readonly slot: number; readonly place: number }
@@ -388,9 +398,12 @@ export class World {
     const L = this.track.length;
     for (let i = 0; i < karts.length; i++) {
       const a = karts[i];
+      if (a.finished || a.squashT > 0) continue;
       for (let j = i + 1; j < karts.length; j++) {
         const b = karts[j];
-        const reach = a.chassis.radius + b.chassis.radius;
+        if (b.finished || b.squashT > 0) continue;
+        const aGiant = a.giantT > 0, bGiant = b.giantT > 0;
+        const reach = a.chassis.radius * (aGiant ? TOKEN_MAXING_SCALE : 1) + b.chassis.radius * (bGiant ? TOKEN_MAXING_SCALE : 1);
         let ds = (a.dist - b.dist) % L;
         if (ds > L / 2) ds -= L;
         if (ds < -L / 2) ds += L;
@@ -398,9 +411,19 @@ export class World {
         const dd = a.d - b.d;
         if (dd > reach || dd < -reach || Math.abs(a.z - b.z) > 2.5) continue;
         const len = Math.hypot(ds, dd);
-        if (len >= reach || len < 1e-6) continue;
-        const nx = ds / len;
-        const ny = dd / len;
+        if (len >= reach) continue;
+        if (aGiant !== bGiant && a.z < .6 && b.z < .6) {
+          const giant = aGiant ? a : b, victim = aGiant ? b : a;
+          // Recovery protection also lets the victim drive clear of an overlapping giant.
+          if (victim.squashGuardT > 0) continue;
+          if (!this.predict && Math.abs(giant.speed) > 4) {
+            squash(this, victim, giant.slot);
+            if (victim === a) break;
+            continue;
+          }
+        }
+        const nx = len < 1e-6 ? 1 : ds / len;
+        const ny = len < 1e-6 ? 0 : dd / len;
         const overlap = reach - len;
         const total = a.mass + b.mass;
         const pushA = (overlap * b.mass) / total;
@@ -435,7 +458,8 @@ export class World {
         const now = wrap(a.dist - b.dist);
         if (!(before < 0 && now >= 0) || before < -8) continue;
         const side = Math.abs(a.d - b.d);
-        if (side >= CLOSE_PASS_WIDTH || side < a.chassis.radius + b.chassis.radius - 0.05 || Math.abs(a.z - b.z) > 2.5) continue;
+        const reach = a.chassis.radius * (a.giantT > 0 ? TOKEN_MAXING_SCALE : 1) + b.chassis.radius * (b.giantT > 0 ? TOKEN_MAXING_SCALE : 1);
+        if (side >= CLOSE_PASS_WIDTH || side < reach - 0.05 || Math.abs(a.z - b.z) > 2.5) continue;
         a.passes++;
         a.passT = CLOSE_PASS_COOLDOWN;
         fillNitro(a, NITRO_CLOSE_PASS);
@@ -468,13 +492,14 @@ export class World {
         if (m.bounces > 3) m.active = false;
       }
       for (const kart of this.karts) {
-        if (kart.finished || kart.z > 3) continue;
+        if (kart.finished || kart.squashT > 0 || kart.z > 3) continue;
         // Your own missiles never hit you, even after a bounce.
         if (kart.slot === m.owner) continue;
         let ds = (kart.dist - m.dist) % L;
         if (ds > L / 2) ds -= L;
         if (ds < -L / 2) ds += L;
-        if (Math.abs(ds) > 2.4 || Math.abs(kart.d - m.d) > 2.0) continue;
+        const size = kart.giantT > 0 ? TOKEN_MAXING_SCALE : 1;
+        if (Math.abs(ds) > 2.4 * size || Math.abs(kart.d - m.d) > 2.0 * size) continue;
         m.active = false;
         damage(this, kart, 34, m.owner);
         break;
@@ -576,9 +601,21 @@ const damage = (world: World, kart: Kart, amount: number, by: number): void => {
   world.events.push({ type: "hit", victim: kart.slot, by });
 };
 
-/** Item boxes only hold missiles; boosts come from your boost meter. */
+const squash = (world: World, kart: Kart, by: number): void => {
+  kart.squashT = SQUASH_SECONDS;
+  kart.squashGuardT = SQUASH_SECONDS + SQUASH_GRACE_SECONDS;
+  kart.speed = kart.kickV = kart.vz = kart.z = 0;
+  kart.stunT = kart.boostT = kart.nitroLit = 0;
+  kart.boostKind = BoostKind.None;
+  kart.drifting = kart.driftCharge = kart.driftChain = kart.chainT = kart.slip = 0;
+  kart.trickT = kart.trickPending = kart.airT = 0;
+  kart.slowFlags = SlowFlag.Squashed;
+  world.events.push({ type: "squash", victim: kart.slot, by });
+};
+
+/** A deterministic one-in-three chance of Token Maxing; boosts still come from the meter. */
 const giveItem = (world: World, kart: Kart): void => {
-  const item = ItemKind.Missile;
+  const item = hash01(world.seed, world.tick, kart.slot + 211) < 1 / 3 ? ItemKind.TokenMaxing : ItemKind.Missile;
   if (kart.item === ItemKind.None) {
     kart.item = item;
     kart.itemCount = 1;
@@ -594,7 +631,10 @@ const giveItem = (world: World, kart: Kart): void => {
 const useItem = (world: World, kart: Kart, backward: boolean): void => {
   const item = kart.item;
   if (item === ItemKind.None) return;
-  world.spawnMissile(kart, backward);
+  if (item === ItemKind.TokenMaxing) {
+    if (kart.giantT > 0) return;
+    kart.giantT = TOKEN_MAXING_SECONDS;
+  } else if (item === ItemKind.Missile) world.spawnMissile(kart, backward);
   world.events.push({ type: "use", slot: kart.slot, item });
   kart.itemCount--;
   if (kart.itemCount <= 0) {
@@ -690,7 +730,17 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
   if (kart.wallT > 0) kart.wallT -= DT;
   if (kart.trickT > 0) kart.trickT -= DT;
   if (kart.passT > 0) kart.passT -= DT;
+  kart.giantT = Math.max(0, kart.giantT - DT);
+  kart.squashGuardT = Math.max(0, kart.squashGuardT - DT);
   if (kart.chainT > 0 && !kart.drifting) kart.chainT -= DT;
+
+  if (kart.squashT > 0) {
+    kart.squashT = Math.max(0, kart.squashT - DT);
+    kart.speed = kart.kickV = kart.vz = kart.z = 0;
+    kart.nitroLit = 0;
+    kart.slowFlags = SlowFlag.Squashed;
+    return;
+  }
 
   // Tap drift in the air to pull a trick; land it for a boost.
   if (!grounded && control && pressed & InputBit.Drift && kart.airT > 0.06 && !kart.trickPending) {
@@ -726,6 +776,10 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
   const gpuBonus = 1 + kart.gpus * GPU_BONUS;
   maxSpeed *= gpuBonus * (1 + comebackBonus(world, kart));
   accel *= gpuBonus;
+  if (kart.giantT > 0) {
+    maxSpeed *= TOKEN_MAXING_SPEED_MULTIPLIER;
+    accel *= TOKEN_MAXING_SPEED_MULTIPLIER;
+  }
   updateDraft(world, kart, grounded);
   maxSpeed *= 1 + 0.05 * kart.draft;
   if (kart.boostT > 0) {
@@ -817,7 +871,7 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
   const assist = surface.loop ? 0 : !grounded ? 0.9 : kart.drifting ? Math.max(kart.cornerAssist, DRIFT_ASSIST) : kart.cornerAssist;
   kart.heading = wrapAngle(kart.heading - k * dsdt * DT * (1 - assist));
 
-  const limit = track.halfWidth - kart.chassis.radius;
+  const limit = track.halfWidth - kart.chassis.radius * (kart.giantT > 0 ? TOKEN_MAXING_SCALE : 1);
   if (kart.d > limit || kart.d < -limit) {
     const side = kart.d > 0 ? 1 : -1;
     kart.d = side * limit;

@@ -183,7 +183,7 @@ describe("feel", () => {
     expect(top(true)).toBeGreaterThan(top(false) * 1.03);
   });
 
-  test("item boxes give a missile you can fire straight away", () => {
+  test("item boxes give an item you can use straight away", () => {
     const world = solo();
     skipCountdown(world);
     const kart = world.karts[0];
@@ -192,11 +192,13 @@ describe("feel", () => {
     kart.d = box.d;
     const inputs = world.karts.map(() => makeInput());
     world.step(inputs);
-    expect(kart.item).toBe(ItemKind.Missile);
+    const item = kart.item;
+    expect(item === ItemKind.Missile || item === ItemKind.TokenMaxing).toBe(true);
     inputs[0].bits = InputBit.Item;
     world.step(inputs);
     expect(kart.item).toBe(ItemKind.None);
-    expect(world.missiles.some((m) => m.active)).toBe(true);
+    if (item === ItemKind.Missile) expect(world.missiles.some((m) => m.active)).toBe(true);
+    else expect(kart.giantT).toBeGreaterThan(0);
   });
 
   test("letting go of the steering lines the kart back up with the road", () => {

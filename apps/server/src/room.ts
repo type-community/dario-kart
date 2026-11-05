@@ -553,6 +553,9 @@ export class RaceRoom {
         // Bots fighting each other is noise in the feed.
         if (event.by < 0 || event.by === event.victim || (this.slots[event.by]?.bot && this.slots[event.victim]?.bot)) return null;
         return `${name(event.by)} took down ${name(event.victim)} with an Outage Missile`;
+      case "squash":
+        if (this.slots[event.by]?.bot && this.slots[event.victim]?.bot) return null;
+        return `${name(event.by)} squashed ${name(event.victim)} with Token Maxing`;
       case "finish":
         return `${name(event.slot)} finished ${ordinal(event.place)}`;
       case "item":

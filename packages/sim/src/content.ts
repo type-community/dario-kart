@@ -219,12 +219,14 @@ export const THEMES: ReadonlyArray<TrackTheme> = [
 export const ItemKind = {
   None: 0,
   Missile: 1,
+  TokenMaxing: 2,
 } as const;
 export type ItemKind = (typeof ItemKind)[keyof typeof ItemKind];
 
 export const ITEM_NAMES: Record<number, string> = {
   0: "",
   1: "Outage Missile",
+  2: "Token Maxing",
 };
 
 export const kartById = (id: string): KartModel => KARTS.find((k) => k.id === id) ?? KARTS[0];

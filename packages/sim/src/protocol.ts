@@ -11,7 +11,7 @@ import { KART_NET_FIELDS, type Kart, type World } from "./world.ts";
  * it must run the same sim as the lobby. A tab from before a deploy (or a new
  * tab reaching a lobby still on old code) is told to reload instead.
  */
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 /** Kart paint: primary body color and secondary accent/livery color. */
 export interface Paint {

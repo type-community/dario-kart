@@ -2,7 +2,7 @@ import { ItemKind } from "./content.ts";
 import { type Input, InputBit } from "./input.ts";
 import { hash01 } from "./rng.ts";
 import { curvatureAt } from "./track.ts";
-import { DRIFT_ASSIST, DRIFT_PULL, DRIFT_STEER, DT, type Kart, Phase, type World } from "./world.ts";
+import { DRIFT_ASSIST, DRIFT_PULL, DRIFT_STEER, DT, TOKEN_MAXING_SPEED_MULTIPLIER, type Kart, Phase, type World } from "./world.ts";
 
 /**
  * Track-following AI. Used for bot racers, for humans after they finish, and
@@ -60,7 +60,9 @@ export const botInput = (world: World, kart: Kart, out: Input, skillOverride?: n
   }
   steer = Math.max(-1, Math.min(1, steer));
 
-  if (kart.stunT <= 0 && speed < 3 && world.phase === Phase.Racing) kart.botStuckT += DT;
+  // Being deliberately flattened is not a navigation failure: drive forward on recovery.
+  if (kart.squashT > 0) kart.botStuckT = 0;
+  else if (kart.stunT <= 0 && speed < 3 && world.phase === Phase.Racing) kart.botStuckT += DT;
   else if (speed > 8) kart.botStuckT = 0;
   if (kart.botStuckT > 1) {
     out.steer = -steer;
@@ -77,7 +79,8 @@ export const botInput = (world: World, kart: Kart, out: Input, skillOverride?: n
     if (kart.drifting ? kart.driftDir * signedK > 0.004 : true) bits |= InputBit.Drift;
   }
   if (speed > cornerLimit * 1.2 && !kart.drifting && !backwards) bits = InputBit.Brake;
-  if (speed > kart.maxSpeed * skill && kart.boostT <= 0) bits &= ~InputBit.Throttle;
+  const giantSpeed = kart.giantT > 0 ? TOKEN_MAXING_SPEED_MULTIPLIER : 1;
+  if (speed > kart.maxSpeed * skill * giantSpeed && kart.boostT <= 0) bits &= ~InputBit.Throttle;
 
   // Nitro on straights; keep burning once lit, and never sit on a full meter.
   if (!kart.finished && !easing && !backwards && !(bits & InputBit.Brake) && kart.nitro > 0) {

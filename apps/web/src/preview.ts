@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { buildKartBody } from "./scene.ts";
+import type { DriverVisual } from "./driver-model.ts";
 
 export interface PreviewLook {
   kart: string;
@@ -18,6 +19,7 @@ export class KartPreview {
   private readonly turntable = new THREE.Group();
   private body: THREE.Group | null = null;
   private glow: THREE.Material | null = null;
+  private driver: DriverVisual | null = null;
   private key = "";
   private running = false;
   private last = 0;
@@ -83,6 +85,7 @@ export class KartPreview {
     const built = buildKartBody(look);
     this.body = built.body;
     this.glow = built.glow;
+    this.driver = built.driver;
     this.turntable.add(this.body);
     // A monster truck or a dragster needs the camera further back than a go-kart.
     const size = new THREE.Box3().setFromObject(this.body).getSize(new THREE.Vector3());
@@ -111,11 +114,13 @@ export class KartPreview {
     if (!this.running) return;
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
+    this.driver?.animate(now / 1000, 0, 0, false);
     if (!this.dragging) this.turntable.rotation.y += this.spin * dt;
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
     if (w > 0 && h > 0) {
-      if (this.canvas.width !== Math.floor(w * this.renderer.getPixelRatio())) {
+      if (this.canvas.width !== Math.floor(w * this.renderer.getPixelRatio()) ||
+          this.canvas.height !== Math.floor(h * this.renderer.getPixelRatio())) {
         this.renderer.setSize(w, h, false);
         this.camera.aspect = w / h;
         this.camera.updateProjectionMatrix();

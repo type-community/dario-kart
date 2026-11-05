@@ -603,7 +603,39 @@ button {
   height: 4rem;
 }
 
+.item-name {
+  position: absolute;
+  top: calc(100% + 1rem);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-weight: 800;
+  text-shadow: 0 2px 4px var(--asphalt-deep);
+}
+
+.hud-maxing {
+  position: absolute;
+  top: 9.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: .1rem .8rem;
+  padding: .45rem .9rem;
+  border: 2px solid var(--hazard);
+  border-radius: .75rem;
+  background: var(--asphalt-deep);
+  color: var(--hazard);
+  white-space: nowrap;
+}
+
+.hud-maxing b { font-variant-numeric: tabular-nums; }
+.hud-maxing small { grid-column: 1 / -1; color: var(--wafer); text-align: center; }
+
 .item-slot .glyph {
+  display: inline-block;
+  width: 2.9rem;
+  height: 2.9rem;
   font-size: 2.6rem;
   line-height: 1;
 }
@@ -631,6 +663,8 @@ button {
 }
 
 .item-slot.second .glyph {
+  width: 2rem;
+  height: 2rem;
   font-size: 1.8rem;
 }
 
