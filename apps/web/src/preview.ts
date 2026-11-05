@@ -84,6 +84,12 @@ export class KartPreview {
     this.body = built.body;
     this.glow = built.glow;
     this.turntable.add(this.body);
+    // A monster truck or a dragster needs the camera further back than a go-kart.
+    const size = new THREE.Box3().setFromObject(this.body).getSize(new THREE.Vector3());
+    const middle = size.y / 2;
+    const distance = 8.6 * Math.max(1, size.length() / 5.2) * (1 + Math.max(0, size.y - 1.8) * 0.3);
+    this.camera.position.set(5.6, 1.95, 6.2).setLength(distance).add(new THREE.Vector3(0, middle * 0.6 + 0.3, 0));
+    this.camera.lookAt(0, middle * 0.6 + 0.2, 0);
   }
 
   /** Attach into a container; the canvas survives lobby re-renders. */

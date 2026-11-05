@@ -115,10 +115,10 @@ const kartPicker = (profile: Profile) => `
     ${KARTS.map((k) => {
       const selected = k.id === profile.kart;
       return `
-      <button class="kart-row" type="button" data-kart="${k.id}" aria-pressed="${selected}" title="${k.perkName}: ${esc(k.perkText)}">
-        <span class="kart-name"><i style="background:${hex(k.color)};box-shadow:3px 0 0 ${hex(k.accent)}"></i>${k.name}</span>
+      <button class="kart-row" type="button" data-kart="${k.id}" aria-pressed="${selected}" title="${k.chassis.label}: ${esc(k.chassis.blurb)} ${k.perkName}: ${esc(k.perkText)}">
+        <span class="kart-name"><i style="background:${hex(k.color)};box-shadow:3px 0 0 ${hex(k.accent)}"></i><span>${k.name}<small>${k.chassis.label}</small></span></span>
         ${meter(k.speed)}${meter(k.handling)}${meter(k.reliability)}${meter(k.durability)}
-        ${selected ? `<span class="perk"><strong>${k.perkName}.</strong> ${k.perkText}</span>` : ""}
+        ${selected ? `<span class="perk">${esc(k.chassis.blurb)} <strong>${k.perkName}:</strong> ${k.perkText}</span>` : ""}
       </button>`;
     }).join("")}
   </div>
