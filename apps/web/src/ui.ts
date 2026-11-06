@@ -144,9 +144,14 @@ const hatRow = (current: HatId) => `
   </div>
 `;
 
+/** Unknown hats (from a newer server) read as no hat. */
 const wearing = (hat: HatId | undefined) => {
   const h = hatById(hat);
   return h.id === "none" ? "" : `, wearing a ${h.name.toLowerCase()}`;
+};
+const hatTag = (hat: HatId | undefined) => {
+  const h = hatById(hat);
+  return h.id === "none" ? "" : ` · ${h.name}`;
 };
 
 const showroom = (profile: Profile) => {
@@ -212,7 +217,7 @@ export const lobbyView = (lobby: LobbyState, profile: Profile, nameSaved = false
             return `<li>
               <span class="pos">${i + 1}</span>
               <span class="dot">${avatarSvg(c.id, 28, false)}</span>
-              <span class="who">${esc(p.name)}<small><i style="background:${hex(p.primary)}"></i><i style="background:${hex(p.secondary)}"></i>${c.name} in ${kartById(p.kart).name}${p.hat && p.hat !== "none" ? ` · ${hatById(p.hat).name}` : ""}</small></span>
+              <span class="who">${esc(p.name)}<small><i style="background:${hex(p.primary)}"></i><i style="background:${hex(p.secondary)}"></i>${c.name} in ${kartById(p.kart).name}${hatTag(p.hat)}</small></span>
               <span class="tag">${p.key === lobby.you ? "You" : p.id === profile.id ? "Your other tab" : p.host ? "Host" : ""}</span>
               ${p.key === lobby.you
                 ? `<button class="quiet kick" type="button" data-action="rename">Rename</button>`

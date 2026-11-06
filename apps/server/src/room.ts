@@ -180,7 +180,8 @@ export class RaceRoom {
     if (!saved) return;
     this.code ||= code;
     this.joinCounter = Math.max(this.joinCounter, saved.joinedAt + 1);
-    const player = this.newPlayer(conn, saved.info, saved.key, saved.joinedAt);
+    // Sockets saved before hats existed come back without one.
+    const player = this.newPlayer(conn, { ...saved.info, hat: validHat(saved.info.hat) }, saved.key, saved.joinedAt);
     this.players.set(conn, player);
     this.save(player);
   }
@@ -272,7 +273,8 @@ export class RaceRoom {
         info.kart = validKart(msg.kart);
         info.primary = validColor(msg.primary, kartById(info.kart).color);
         info.secondary = validColor(msg.secondary, kartById(info.kart).accent);
-        info.hat = validHat(msg.hat);
+        // Like pick: a hello without a hat (an older tab reconnecting) keeps the hat.
+        if (msg.hat !== undefined) info.hat = validHat(msg.hat);
         if (!existing) this.players.set(conn, this.newPlayer(conn, info, crypto.randomUUID().slice(0, 8), this.joinCounter++));
         const player = this.players.get(conn)!;
         this.save(player);

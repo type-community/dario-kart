@@ -237,6 +237,9 @@ describe("lobby", () => {
     pick("<script>");
     expect(hats()).toEqual(["none", "none"]);
     pick("top");
+    // A hello without a hat (an older tab reconnecting) keeps it too.
+    hello(room, a.conn, "Ada");
+    expect(hats()).toEqual(["top", "none"]);
     room.message(a.conn, JSON.stringify({ t: "start" }));
     const race = b.messages.find((m) => m.t === "race");
     expect(race && race.t === "race" ? race.slots.filter((s) => !s.bot).map((s) => s.hat) : []).toEqual(["top", "none"]);
