@@ -33,6 +33,11 @@ const LOOKS: Record<string, Look> = {
   mira: { hair: "long", mouth: "calm", outfit: "crew", brows: "arched", quip: "Thinking very carefully about the racing line." },
   jensen: { hair: "swept", mouth: "grin", outfit: "leather", brows: "raised", quip: "The more you boost, the more you save." },
   demis: { hair: "receding", mouth: "calm", outfit: "blazer", brows: "flat", quip: "Solved the track before the race started." },
+  tim: { hair: "crew", mouth: "smile", outfit: "crew", glasses: "rect", brows: "flat", quip: "One more thing: the finish line." },
+  andy: { hair: "bald", mouth: "grin", outfit: "zip", brows: "raised", quip: "Every lap is still Day 1." },
+  arthur: { hair: "tousled", mouth: "calm", outfit: "tee", stubble: true, brows: "flat", quip: "Open weights, French engineering, no speed limit." },
+  aravind: { hair: "side", mouth: "smile", outfit: "crew", brows: "raised", quip: "Has a cited source for every overtake." },
+  liang: { hair: "side", mouth: "neutral", outfit: "sweater", glasses: "rect", brows: "flat", quip: "Trained his racing line on a tight budget." },
 };
 
 const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
@@ -218,4 +223,9 @@ export const EMOTES: Record<string, readonly [string, string, string, string]> =
   mira: ["Thinking... machines.", "A very considered pass.", "Taste matters.", "Carefully. Very carefully."],
   jensen: ["The more you boost, the more you save!", "This jacket is aerodynamic.", "Accelerated computing!", "Sold out until 2027."],
   demis: ["Solved it.", "AlphaKart saw this coming.", "Checkmate by lap three.", "Nobel-worthy racing line."],
+  tim: ["One more thing...", "Courage.", "It just works.", "Available in Space Black."],
+  andy: ["It's still Day 1.", "Same-day delivery to the podium.", "Disagree and commit.", "Customer-obsessed overtake."],
+  arthur: ["Le Chat says hello.", "Open weights, open throttle.", "Mixture of experts, mixture of drifts.", "Bonne chance!"],
+  aravind: ["Sources: me, in first.", "Just ask.", "Answer engine, finish engine.", "Can I buy your kart?"],
+  liang: ["Trained on a budget.", "Open-sourced my lap.", "Reasoning... overtaking.", "That lap cost a fraction."],
 };

@@ -42,7 +42,7 @@ const meter = (value: number) =>
 export const landingView = (profile: Profile, code: string, error: string) => `
   <section class="landing">
     <h1 class="wordmark">Dario<br />Kart</h1>
-    <p class="pitch">Ten AI lab CEOs, seven model-powered karts, one missile and a nitro you earn by driving well. Lobbies hold up to 100 drivers, and the track grows with the field.</p>
+    <p class="pitch">Fifteen tech CEOs, seven model-powered karts, one missile and a nitro you earn by driving well. Lobbies hold up to 100 drivers, and the track grows with the field.</p>
     <form data-form="landing" novalidate>
       <div class="field">
         <label for="name">Your name</label>

@@ -22,6 +22,11 @@ export const CHARACTERS: ReadonlyArray<Character> = [
   { id: "mira", name: "Mira", org: "Thinking Machines", color: 0xb18cff, outfit: 0xf2efe9, skin: 0xe4b48f, hair: 0x2a1a14 },
   { id: "jensen", name: "Jensen", org: "NVIDIA", color: 0x76b900, outfit: 0x0e0e0e, skin: 0xe6bf9c, hair: 0xb9b9bd },
   { id: "demis", name: "Demis", org: "Google DeepMind", color: 0x1fb6c9, outfit: 0x24324a, skin: 0xd9a582, hair: 0x2e231d },
+  { id: "tim", name: "Tim", org: "Apple", color: 0xa2aaad, outfit: 0x1d1d1f, skin: 0xf0cdb2, hair: 0xc9c9cc },
+  { id: "andy", name: "Andy", org: "Amazon", color: 0xff9900, outfit: 0x232f3e, skin: 0xeec3a3, hair: 0x8a7a6e },
+  { id: "arthur", name: "Arthur", org: "Mistral AI", color: 0xfa520f, outfit: 0x1f2937, skin: 0xedc4a5, hair: 0x3b2a20 },
+  { id: "aravind", name: "Aravind", org: "Perplexity", color: 0x20808d, outfit: 0x13343b, skin: 0xb98560, hair: 0x1d1714 },
+  { id: "liang", name: "Liang", org: "DeepSeek", color: 0x4d6bfe, outfit: 0x2a2f3a, skin: 0xe8c19e, hair: 0x16120f },
 ];
 
 export type Perk =
