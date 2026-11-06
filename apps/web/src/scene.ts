@@ -7,6 +7,7 @@ import { type ChassisFit, type Part, chassisFit, kartGeometry, partMaterial } fr
 import { makeRackMissile } from "./fx.ts";
 import { DriverVisual } from "./driver-model.ts";
 import { THEME_LOOKS, type PlacedBuilding, themeDecor } from "./landmarks.ts";
+import { type Trick, randomTrick, trickPose } from "./tricks.ts";
 
 const pose = makePose();
 const basisX = new THREE.Vector3();
@@ -785,6 +786,10 @@ export class KartVisual {
     return Math.max(0, this.fit.label - 3.1);
   }
   private readonly rack: THREE.Mesh[] = [];
+  private trick: Trick = "barrelRoll";
+  private lastTrickT = 0;
+  /** Middle of the kart body, the pivot for flips. */
+  private readonly center: THREE.Vector3;
 
   constructor(look: KartLook) {
     const built = buildKartBody(look);
@@ -792,6 +797,7 @@ export class KartVisual {
     this.glow = built.glow;
     this.driver = built.driver;
     this.fit = built.fit;
+    this.center = new THREE.Box3().setFromObject(this.body).getCenter(new THREE.Vector3());
     this.root.add(this.body);
     this.body.traverse((part) => {
       if (part instanceof THREE.Mesh) this.surfaces.push({ mesh: part, material: part.material });
@@ -859,9 +865,20 @@ export class KartVisual {
     }
     this.body.rotation.y = squashT > 0 ? 0 : state.stunT > 0 ? state.time * 14 : -state.slip * 0.35;
     this.body.rotation.z = squashT > 0 || state.stunT > 0 ? 0 : state.slip * 0.2;
-    // Trick: a full barrel roll while airborne.
+    // Trick: a random one from the set (barrel roll or front flip) while airborne.
+    if (state.trickT > this.lastTrickT) this.trick = randomTrick();
+    this.lastTrickT = state.trickT;
     this.body.rotation.x = 0;
-    if (squashT <= 0 && state.trickT > 0) this.body.rotation.z = (1 - state.trickT / 0.45) * Math.PI * 2;
+    this.body.position.z = 0;
+    if (squashT <= 0 && state.trickT > 0) {
+      const { x, z } = trickPose(this.trick, state.trickT);
+      this.body.rotation.x = x;
+      this.body.rotation.z = z;
+      // Flip around the kart's middle, not its wheels, so the nose doesn't dip through the road.
+      const cy = this.center.y * size, cz = this.center.z * size;
+      this.body.position.y += cy - (cy * Math.cos(x) - cz * Math.sin(x));
+      this.body.position.z = cz - (cy * Math.sin(x) + cz * Math.cos(x));
+    }
     if (squashT <= 0 && this.fit.hover) {
       this.body.position.y += 0.3 + Math.sin(state.time * 3.2 + this.fit.label) * 0.07;
       if (state.stunT <= 0 && state.trickT <= 0) this.body.rotation.z = state.slip * 0.45;
