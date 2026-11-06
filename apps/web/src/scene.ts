@@ -765,6 +765,14 @@ export const buildKartBody = (look: Pick<KartLook, "kart" | "character" | "prima
 };
 
 /** Visual for one racer. */
+/** Airborne trick animations; each trick picks one at random. Visual only: the sim never sees which. */
+export const TRICKS = [
+  { name: "Barrel roll", axis: "z" },
+  { name: "Front flip", axis: "x" },
+] as const;
+export type Trick = (typeof TRICKS)[number];
+export const pickTrick = (roll = Math.random()): Trick => TRICKS[Math.min(TRICKS.length - 1, Math.floor(roll * TRICKS.length))];
+
 export class KartVisual {
   readonly root = new THREE.Group();
   readonly body: THREE.Group;
@@ -778,6 +786,9 @@ export class KartVisual {
   private hitAt = -100;
   private quietHit = false;
   private flashing = false;
+  private lastTrickT = 0;
+  /** The trick this kart is doing (or did last). */
+  trick: Trick = TRICKS[0];
   private readonly label: THREE.Sprite;
   private readonly fit: ChassisFit;
   /** How much taller than a standard kart this one is: the chase camera rides higher. */
@@ -859,9 +870,11 @@ export class KartVisual {
     }
     this.body.rotation.y = squashT > 0 ? 0 : state.stunT > 0 ? state.time * 14 : -state.slip * 0.35;
     this.body.rotation.z = squashT > 0 || state.stunT > 0 ? 0 : state.slip * 0.2;
-    // Trick: a full barrel roll while airborne.
+    // Trick: a full turn around the picked trick's axis while airborne.
+    if (state.trickT > this.lastTrickT) this.trick = pickTrick();
+    this.lastTrickT = state.trickT;
     this.body.rotation.x = 0;
-    if (squashT <= 0 && state.trickT > 0) this.body.rotation.z = (1 - state.trickT / 0.45) * Math.PI * 2;
+    if (squashT <= 0 && state.trickT > 0) this.body.rotation[this.trick.axis] = (1 - state.trickT / 0.45) * Math.PI * 2;
     if (squashT <= 0 && this.fit.hover) {
       this.body.position.y += 0.3 + Math.sin(state.time * 3.2 + this.fit.label) * 0.07;
       if (state.stunT <= 0 && state.trickT <= 0) this.body.rotation.z = state.slip * 0.45;

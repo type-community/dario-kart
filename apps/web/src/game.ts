@@ -845,7 +845,7 @@ export class RaceView {
     w.air = air;
     if (me.trickT > 0 && w.trick <= 0) {
       sound.trick();
-      hud.calloutText("Trick!", "item");
+      hud.calloutText(`${this.visuals[me.slot].trick.name}!`, "item");
     }
     w.trick = me.trickT;
     const tier = me.drifting ? (me.driftCharge >= 2.3 ? 3 : me.driftCharge >= 1.4 ? 2 : me.driftCharge >= 0.7 ? 1 : 0) : 0;
