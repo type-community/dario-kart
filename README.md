@@ -31,7 +31,7 @@ Controls: `W A S D` or arrow keys to drive, `Space` to drift (sparks go blue, th
 - **Boost meter (the nitro):** driving with style fills it: drifting, slipstreaming and close passes (overtaking within a few meters without touching). Landing a trick adds a bit too. Hold `Shift` to burn it as a boost; a full meter lasts 2.2 seconds.
 - **Drift tiers:** sparks go white, blue, pink, purple. Release for a mini, super or ULTRA boost.
 - **Drift chains:** start your next drift within 2 seconds of a drift boost and the chain grows, up to ×4. Each link makes the boost 12% longer and fills the meter faster. A hard wall hit, a missile or waiting too long breaks it. A drift too short to pay out doesn't count either way.
-- **Tricks:** tap `Space` in the air off any ramp, crest or bumper, then land it for a boost.
+- **Tricks:** tap `Space` in the air off any ramp, crest or bumper (a barrel roll or a front flip, picked at random), then land it for a boost.
 - **Items:** item boxes give an Outage Missile (`E` fires ahead, `Q` behind) or **Token Maxing** (`E` to activate). Token Maxing makes your kart 1.85× bigger with 10% more top speed and acceleration for 8 seconds: run over smaller racers to flatten and stop them for 1.2 seconds. They get 1 second of protection after recovering; giants cannot squash each other. Its speed bonus stacks with boosts within the usual speed cap. Held missiles appear on the roof rack, and an incoming-missile warning sounds when one is closing in.
 - **Slipstream:** tuck in behind a rival and you get towed along (up to +5% top speed) while your meter fills.
 - **GPUs:** green chips on risky lines (loops, ramp arcs, banked walls). Each adds 1% top speed, up to 10; hits make you drop 3.
