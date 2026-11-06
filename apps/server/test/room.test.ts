@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { KICKED, PROTOCOL_VERSION, type ServerMessage, decodeSnapshot, encodeInputs, kartField } from "@dario-kart/sim";
+import { KICKED, PROTOCOL_VERSION, cleanChat, type ServerMessage, decodeSnapshot, encodeInputs, kartField } from "@dario-kart/sim";
 import { type Conn, RaceRoom, type Saved } from "../src/room.ts";
 
 /** Regression tests for the bugs TLC found in specs/RaceLobby.tla. */
@@ -282,4 +282,45 @@ describe("lobby", () => {
     expect(amHost(b)).toBe(false);
     expect(lastLobby(a).you).toBe(keyA);
   });
+});
+
+describe("lobby chat", () => {
+  test("a chat line reaches everyone with the sender's name, cleaned and rate limited", () => {
+    const room = new RaceRoom(() => {});
+    const a = client();
+    const b = client();
+    room.connect(a.conn, "CHAT1");
+    hello(room, a.conn, "Ada");
+    room.connect(b.conn, "CHAT1");
+    hello(room, b.conn, "Ben");
+    room.message(a.conn, JSON.stringify({ t: "chat", text: "  hi‮  there\n" }));
+    // Too soon after the last line, and empty lines, are dropped.
+    room.message(a.conn, JSON.stringify({ t: "chat", text: "spam" }));
+    room.message(b.conn, JSON.stringify({ t: "chat", text: " ​ " }));
+    room.message(b.conn, JSON.stringify({ t: "chat", text: 42 }));
+    const lines = (c: ReturnType<typeof client>) => c.messages.flatMap((m) => (m.t === "chat" ? [m.line] : []));
+    for (const c of [a, b]) expect(lines(c).map((l) => [l.name, l.text])).toEqual([["Ada", "hi there"]]);
+    expect(lines(b)[0].text.length).toBeLessThanOrEqual(200);
+    room.message(b.conn, JSON.stringify({ t: "chat", text: "x".repeat(500) }));
+    expect(lines(a)[1].text).toBe("x".repeat(200));
+  });
+
+  test("someone who joins later gets the recent chat", () => {
+    const room = new RaceRoom(() => {});
+    const a = client();
+    room.connect(a.conn, "CHAT2");
+    hello(room, a.conn, "Ada");
+    expect(a.messages.find((m) => m.t === "chatHistory")).toEqual({ t: "chatHistory", lines: [] });
+    room.message(a.conn, JSON.stringify({ t: "chat", text: "who's racing?" }));
+    const c = client();
+    room.connect(c.conn, "CHAT2");
+    hello(room, c.conn, "Cy");
+    const history = c.messages.find((m) => m.t === "chatHistory");
+    expect(history && history.t === "chatHistory" && history.lines.map((l) => l.text)).toEqual(["who's racing?"]);
+  });
+});
+
+test("chat cleaning keeps emoji whole", () => {
+  expect(cleanChat("go \u{1F469}‍\u{1F680}!")).toBe("go \u{1F469}‍\u{1F680}!");
+  expect(cleanChat("\u{1F3CE}".repeat(300))).toBe("\u{1F3CE}".repeat(200));
 });

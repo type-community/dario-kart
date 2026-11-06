@@ -2,7 +2,7 @@ import {
   CHARACTERS, type ClientMessage, GapStats, type Input, InputBit, KARTS, type LobbyPlayer, Phase,
   type RaceResult, type RaceSlot, SNAPSHOT_ACK_OFFSET, type ServerMessage, THEMES, TICK_RATE,
   type ThemeId, World, botInput, characterIndex, decodeInputs, encodeSnapshot, kartIndex,
-  INPUTS_PER_PACKET, KICKED, LOBBY_FULL, PROTOCOL_VERSION, inputsPerPacket, type NetReport, cleanName, cleanNetReport, kartById, makeInput, snapshotSize, validColor,
+  type ChatLine, INPUTS_PER_PACKET, KICKED, LOBBY_FULL, PROTOCOL_VERSION, inputsPerPacket, type NetReport, cleanChat, cleanName, cleanNetReport, kartById, makeInput, snapshotSize, validColor,
 } from "@dario-kart/sim";
 
 /**
@@ -41,6 +41,10 @@ const RESULTS_MS = 9000;
 const MAX_RACE_TICKS = 15 * 60 * TICK_RATE;
 /** How long a race with nobody connected keeps running, waiting for a reconnect. */
 const ABANDON_MS = 30_000;
+/** Chat lines a lobby remembers for people who join later. */
+const CHAT_HISTORY = 50;
+/** Minimum gap between one connection's chat lines. */
+const CHAT_GAP_MS = 400;
 const QUEUE_SIZE = 64;
 /** Hard cap on buffered inputs, in packets; anything older is already late. */
 const QUEUE_MAX_PACKETS = 3;
@@ -125,6 +129,7 @@ interface Player {
   readonly queue: InputQueue;
   slot: number;
   lastEmote: number;
+  lastChat: number;
   lastNudge: number;
   errorsLogged: number;
   /** Gaps between this connection's input messages arriving (sent at 30 Hz). */
@@ -163,6 +168,8 @@ export class RaceRoom {
   private resultsTimer: ReturnType<typeof setTimeout> | null = null;
   private abandonTimer: ReturnType<typeof setTimeout> | null = null;
   private joinCounter = 0;
+  /** Recent lobby chat, oldest first. In memory only: a hibernation clears it. */
+  private chat: ChatLine[] = [];
 
   /** `null` clears the socket's saved state, so a restore skips it. */
   constructor(private readonly persist: (conn: Conn, saved: Saved | null) => void) {}
@@ -185,7 +192,7 @@ export class RaceRoom {
   }
 
   private newPlayer(conn: Conn, info: PlayerInfo, key: string, joinedAt: number): Player {
-    return { conn, info, key, joinedAt, queue: new InputQueue(), slot: -1, lastEmote: 0, lastNudge: 0, errorsLogged: 0, inputGaps: new GapStats(), net: null };
+    return { conn, info, key, joinedAt, queue: new InputQueue(), slot: -1, lastEmote: 0, lastChat: 0, lastNudge: 0, errorsLogged: 0, inputGaps: new GapStats(), net: null };
   }
 
   private save(player: Player): void {
@@ -280,6 +287,7 @@ export class RaceRoom {
         const rejoined = !existing && this.world ? this.reattach(player) : -1;
         log(existing ? "hello" : "join", { code: this.code, player: info.id, name: info.name, racing: this.racing, rejoinedSlot: rejoined, players: this.players.size });
         this.broadcastLobby();
+        if (!existing) this.send(conn, { t: "chatHistory", lines: this.chat });
         if (this.world) {
           this.send(conn, { t: "race", seed: this.world.seed, track: this.world.track.theme, laps: this.world.laps, slots: this.slots, you: rejoined, batch: this.batch });
         }
@@ -337,6 +345,18 @@ export class RaceRoom {
         if (!player || player.slot < 0 || !this.world || now - player.lastEmote < 1500) return;
         player.lastEmote = now;
         this.broadcast({ t: "emote", slot: player.slot, n: Math.max(0, Math.min(3, Math.floor(Number(msg.n) || 0))) });
+        break;
+      }
+      case "chat": {
+        const player = this.players.get(conn);
+        const text = cleanChat(msg.text);
+        const now = Date.now();
+        if (!player || !text || now - player.lastChat < CHAT_GAP_MS) return;
+        player.lastChat = now;
+        const line: ChatLine = { key: player.key, name: player.info.name, text };
+        this.chat.push(line);
+        if (this.chat.length > CHAT_HISTORY) this.chat.shift();
+        this.broadcast({ t: "chat", line });
         break;
       }
       case "clientError": {

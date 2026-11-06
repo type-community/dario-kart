@@ -1,6 +1,6 @@
 import "./style.css";
 import {
-  CHARACTERS, KARTS, KICKED, LAPS, cleanName, PROTOCOL_VERSION, type RaceResult, type RaceSlot, type ServerMessage, THEMES, TICK_RATE, type ThemeId, kartById,
+  CHARACTERS, type ChatLine, KARTS, KICKED, LAPS, cleanChat, cleanName, PROTOCOL_VERSION, type RaceResult, type RaceSlot, type ServerMessage, THEMES, TICK_RATE, type ThemeId, kartById,
 } from "@dario-kart/sim";
 import { sound } from "./audio.ts";
 import { Controls } from "./controls.ts";
@@ -9,7 +9,7 @@ import { Hud } from "./hud.ts";
 import { Net } from "./net.ts";
 import { KartPreview } from "./preview.ts";
 import {
-  type LobbyState, type Profile, joiningView, landingView, lobbyView, pauseView, placeholderName, resultsView,
+  type LobbyState, type Profile, chatLine, joiningView, landingView, lobbyView, pauseView, placeholderName, resultsView,
 } from "./ui.ts";
 
 type Screen =
@@ -47,6 +47,9 @@ saveProfile();
 
 let screen: Screen = { kind: "landing", error: "" };
 let lobby: LobbyState | null = null;
+/** The current lobby's chat, oldest first; null until the server sends it (older servers never do). */
+let chat: ChatLine[] | null = null;
+const CHAT_KEEP = 50;
 let view: RaceView | null = null;
 let practicing = false;
 let attractTheme: ThemeId | null = null;
@@ -122,15 +125,23 @@ const go = (next: Screen) => {
     case "lobby": {
       if (!lobby) return;
       const scroll = ui.scrollTop;
-      // Lobby updates redraw everything; don't wipe out a name being typed.
-      const typing = document.activeElement?.id === "lobby-name" ? document.activeElement as HTMLInputElement : null;
-      ui.innerHTML = lobbyView(lobby, profile, nameSaved !== null);
+      // Lobby updates redraw everything; don't wipe out a name or chat line being typed.
+      const active = document.activeElement;
+      const typing = active instanceof HTMLInputElement && (active.id === "lobby-name" || active.id === "chat-input") ? active : null;
+      const draft = ui.querySelector<HTMLInputElement>("#chat-input")?.value ?? "";
+      const oldLog = ui.querySelector<HTMLElement>(".chat-log");
+      const logScroll = oldLog && !chatAtBottom(oldLog) ? oldLog.scrollTop : null;
+      ui.innerHTML = lobbyView(lobby, profile, nameSaved !== null, chat);
       ui.scrollTop = scroll;
-      const nameInput = ui.querySelector<HTMLInputElement>("#lobby-name");
-      if (typing && nameInput) {
-        nameInput.value = typing.value;
-        nameInput.focus();
-        nameInput.setSelectionRange(typing.selectionStart, typing.selectionEnd);
+      const chatInput = ui.querySelector<HTMLInputElement>("#chat-input");
+      if (chatInput) chatInput.value = draft;
+      const log = ui.querySelector<HTMLElement>(".chat-log");
+      if (log) log.scrollTop = logScroll ?? log.scrollHeight;
+      const restored = typing ? ui.querySelector<HTMLInputElement>(`#${typing.id}`) : null;
+      if (typing && restored) {
+        restored.value = typing.value;
+        restored.focus();
+        restored.setSelectionRange(typing.selectionStart, typing.selectionEnd);
       }
       const slot = ui.querySelector<HTMLElement>("[data-preview]");
       if (slot) {
@@ -180,6 +191,7 @@ const join = (code: string, pushHistory = true) => {
     return;
   }
   if (pushHistory && new URLSearchParams(location.search).get("race") !== clean) history.pushState({ race: clean }, "", `?race=${clean}`);
+  chat = null;
   go({ kind: "joining", code: clean });
   net.connect(clean, hello());
 };
@@ -284,12 +296,43 @@ net.onMessage = (msg: ServerMessage) => {
     case "emote":
       view?.showEmote(msg.slot, msg.n);
       break;
+    case "chat":
+      if (!chat) break;
+      chat.push(msg.line);
+      if (chat.length > CHAT_KEEP) chat.shift();
+      appendChat(msg.line);
+      break;
+    case "chatHistory":
+      chat = msg.lines.slice(-CHAT_KEEP);
+      if (screen.kind === "lobby") go({ kind: "lobby" });
+      break;
     case "error":
       goHome(msg.message, false);
       break;
     case "pong":
       break;
   }
+};
+
+const chatAtBottom = (log: HTMLElement) => log.scrollHeight - log.scrollTop - log.clientHeight < 24;
+
+/** Add one line to the chat log without redrawing the lobby; follow along only if already at the bottom. */
+const appendChat = (line: ChatLine) => {
+  const log = ui.querySelector<HTMLElement>(".chat-log");
+  if (screen.kind !== "lobby" || !log || !lobby) return;
+  const follow = chatAtBottom(log) || line.key === lobby.you;
+  log.querySelector(".chat-empty")?.remove();
+  log.insertAdjacentHTML("beforeend", chatLine(line, lobby.you));
+  while (log.children.length > CHAT_KEEP) log.firstElementChild!.remove();
+  if (follow) log.scrollTop = log.scrollHeight;
+};
+
+const sendChat = () => {
+  const input = ui.querySelector<HTMLInputElement>("#chat-input");
+  if (!input) return;
+  const text = cleanChat(input.value);
+  // Keep the line in the box if we're between connections, so it can be sent again.
+  if (!text || net.send({ t: "chat", text })) input.value = "";
 };
 
 /** A short-lived message across the top of the lobby. */
@@ -336,6 +379,10 @@ ui.addEventListener("submit", (e) => {
   e.preventDefault();
   if ((e.target as HTMLElement).dataset.form === "name") {
     commitLobbyName();
+    return;
+  }
+  if ((e.target as HTMLElement).dataset.form === "chat") {
+    sendChat();
     return;
   }
   readName();
