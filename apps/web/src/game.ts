@@ -1,5 +1,5 @@
 import {
-  BoostKind, COUNTDOWN_TICKS, type DecodedSnapshot, DT, type Input, InputBit, ItemKind, KART_NET_FIELDS, type Kart,
+  BoostKind, COUNTDOWN_TICKS, type DecodedSnapshot, DT, INPUTS_PER_PACKET, type Input, InputBit, ItemKind, KART_NET_FIELDS, type Kart,
   Phase, type RaceSlot, TICK_RATE, type ThemeId, World, applyKartFields, botInput, characterIndex,
   copyInput, kartIndex, makeInput, themeById, touchesBox, touchesCoin, wrapS,
 } from "@dario-kart/sim";
@@ -95,6 +95,8 @@ export interface RaceSetup {
   readonly slots: ReadonlyArray<RaceSlot>;
   /** Your slot, or -1 to spectate. */
   readonly you: number;
+  /** Inputs per packet the server wants; bigger lobbies send fewer, bigger packets. */
+  readonly batch?: number;
 }
 
 export type RaceMode =
@@ -175,6 +177,12 @@ export class RaceView {
   private seq = 0;
   private readonly pending: Input[] = [];
   private readonly outbox: Input[] = [];
+  /**
+   * How many inputs were in flight when the server saw us finish, or -1. The
+   * server drives finished karts itself and stops acknowledging inputs, so
+   * after that we stop sending and keep only this many to predict with.
+   */
+  private finishedPending = -1;
   private readonly snaps: Snap[] = [];
   private latest: DecodedSnapshot | null = null;
   private tickOffset: number | null = null;
@@ -366,7 +374,8 @@ export class RaceView {
     this.pending.push(stored);
     this.outbox.push(stored);
     this.world.predictOne(me, input);
-    if (this.outbox.length >= 2) {
+    if (this.finishedPending >= 0) this.outbox.length = 0;
+    if (this.outbox.length >= (this.setup.batch ?? INPUTS_PER_PACKET)) {
       this.mode.kind === "online" && this.mode.net.sendInputs(this.outbox, this.setup.seed);
       this.outbox.length = 0;
     }
@@ -423,6 +432,11 @@ export class RaceView {
     let drop = 0;
     while (drop < this.pending.length && this.pending[drop].seq <= ack) drop++;
     if (drop > 0) this.pending.splice(0, drop);
+    if (this.finishedPending < 0 && me.finished) this.finishedPending = this.pending.length;
+    // Without this, a race that runs on long after we finish replays thousands of inputs a frame.
+    if (this.finishedPending >= 0 && this.pending.length > this.finishedPending) {
+      this.pending.splice(0, this.pending.length - this.finishedPending);
+    }
     // Counts the countdown down too, so GO happens on time even if snapshots don't.
     if (world.phase !== Phase.Finished) for (const input of this.pending) world.predictOne(me, input);
     this.correction.dist += before.dist - me.dist;

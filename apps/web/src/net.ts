@@ -1,6 +1,6 @@
 import {
   type ClientMessage, type DecodedSnapshot, GapStats, type Input, KICKED, MSG_SNAPSHOT, type NetReport, type ServerMessage,
-  decodeSnapshot, encodeInputs,
+  LOBBY_FULL, decodeSnapshot, encodeInputs,
 } from "@dario-kart/sim";
 
 const gameUrl = (): string => {
@@ -16,9 +16,9 @@ const PONG_TIMEOUT_MS = 7000;
 /**
  * Close codes that mean "don't come back": we left, the lobby is full, a
  * newer connection took our seat (retrying would just take it back), or we
- * were kicked.
+ * were kicked. Not 1013: that's Cloudflare shedding load, and worth a retry.
  */
-const FINAL_CODES = new Set([1000, 1013, 4000, KICKED]);
+const FINAL_CODES = new Set([1000, 4000, KICKED, LOBBY_FULL]);
 
 export class Net {
   private ws: WebSocket | null = null;

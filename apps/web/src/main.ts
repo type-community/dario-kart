@@ -265,7 +265,7 @@ net.onMessage = (msg: ServerMessage) => {
         if (statsTimer) clearInterval(statsTimer);
         statsTimer = setInterval(() => sendNetStats(false), 10_000);
       }
-      startRace({ seed: msg.seed, track: msg.track, laps: msg.laps, slots: msg.slots, you: msg.you }, false);
+      startRace({ seed: msg.seed, track: msg.track, laps: msg.laps, slots: msg.slots, you: msg.you, batch: msg.batch }, false);
       break;
     case "results": {
       sendNetStats(true);

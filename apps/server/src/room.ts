@@ -2,7 +2,7 @@ import {
   CHARACTERS, type ClientMessage, GapStats, type Input, InputBit, KARTS, type LobbyPlayer, Phase,
   type RaceResult, type RaceSlot, SNAPSHOT_ACK_OFFSET, type ServerMessage, THEMES, TICK_RATE,
   type ThemeId, World, botInput, characterIndex, decodeInputs, encodeSnapshot, kartIndex,
-  KICKED, PROTOCOL_VERSION, type NetReport, cleanName, cleanNetReport, kartById, makeInput, snapshotSize, validColor,
+  INPUTS_PER_PACKET, KICKED, LOBBY_FULL, PROTOCOL_VERSION, inputsPerPacket, type NetReport, cleanName, cleanNetReport, kartById, makeInput, snapshotSize, validColor,
 } from "@dario-kart/sim";
 
 /**
@@ -41,14 +41,9 @@ const RESULTS_MS = 9000;
 const MAX_RACE_TICKS = 15 * 60 * TICK_RATE;
 /** How long a race with nobody connected keeps running, waiting for a reconnect. */
 const ABANDON_MS = 30_000;
-const QUEUE_SIZE = 32;
-/** Hard cap on buffered inputs; anything older is already late. */
-const QUEUE_MAX = 6;
-/**
- * Inputs arrive two per message, so a queue that never drains below this over
- * a window is pure added lag (usually left over from a burst after a stall).
- */
-const QUEUE_SLACK = 2;
+const QUEUE_SIZE = 64;
+/** Hard cap on buffered inputs, in packets; anything older is already late. */
+const QUEUE_MAX_PACKETS = 3;
 const QUEUE_WINDOW = 30;
 /** Taps that must survive an input being skipped. */
 const EDGE_BITS = InputBit.Item | InputBit.Drift;
@@ -59,6 +54,12 @@ export class InputQueue {
   private size = 0;
   private low = QUEUE_SIZE;
   private taken = 0;
+  private max = QUEUE_MAX_PACKETS * INPUTS_PER_PACKET;
+  /**
+   * Inputs arrive a packet at a time, so a queue that never drains below one
+   * packet over a window is pure added lag (usually left over from a burst after a stall).
+   */
+  private slack = INPUTS_PER_PACKET;
   readonly last: Input = makeInput();
 
   push(seq: number, steer: number, bits: number): void {
@@ -84,10 +85,10 @@ export class InputQueue {
    * skips ahead when it's far behind, and sheds standing lag a tick at a time.
    */
   take(): Input {
-    while (this.size > QUEUE_MAX) this.skip();
+    while (this.size > this.max) this.skip();
     this.low = Math.min(this.low, this.size);
     if (++this.taken >= QUEUE_WINDOW) {
-      if (this.low > QUEUE_SLACK) this.skip();
+      if (this.low > this.slack) this.skip();
       this.low = QUEUE_SIZE;
       this.taken = 0;
     }
@@ -102,7 +103,10 @@ export class InputQueue {
     return this.last;
   }
 
-  clear(): void {
+  /** Empty the queue for a race whose clients send `batch` inputs per packet. */
+  clear(batch = INPUTS_PER_PACKET): void {
+    this.max = QUEUE_MAX_PACKETS * batch;
+    this.slack = batch;
     this.head = 0;
     this.size = 0;
     this.low = QUEUE_SIZE;
@@ -148,6 +152,8 @@ export class RaceRoom {
   private slots: RaceSlot[] = [];
   private slotPlayers: Array<Player | null> = [];
   private inputs: Input[] = [];
+  /** Inputs per packet this race's clients send. */
+  private batch = INPUTS_PER_PACKET;
   private loop: ReturnType<typeof setInterval> | null = null;
   /** Gaps between snapshots leaving the server: a stalled object, not the network. */
   private readonly snapshotGaps = new GapStats();
@@ -189,7 +195,7 @@ export class RaceRoom {
   connect(conn: Conn, code: string): void {
     this.code ||= code;
     if (this.players.size >= MAX_RACERS) {
-      conn.close(1013, "Lobby full");
+      conn.close(LOBBY_FULL, "Lobby full");
     }
   }
 
@@ -275,7 +281,7 @@ export class RaceRoom {
         log(existing ? "hello" : "join", { code: this.code, player: info.id, name: info.name, racing: this.racing, rejoinedSlot: rejoined, players: this.players.size });
         this.broadcastLobby();
         if (this.world) {
-          this.send(conn, { t: "race", seed: this.world.seed, track: this.world.track.theme, laps: this.world.laps, slots: this.slots, you: rejoined });
+          this.send(conn, { t: "race", seed: this.world.seed, track: this.world.track.theme, laps: this.world.laps, slots: this.slots, you: rejoined, batch: this.batch });
         }
         break;
       }
@@ -392,7 +398,7 @@ export class RaceRoom {
       }
     }
     player.slot = slot;
-    player.queue.clear();
+    player.queue.clear(this.batch);
     this.slotPlayers[slot] = player;
     return slot;
   }
@@ -448,9 +454,10 @@ export class RaceRoom {
       p.inputGaps.reset();
     }
     this.snapshotGaps.reset();
+    this.batch = inputsPerPacket(humans.length);
     humans.forEach((p, i) => {
       p.slot = i;
-      p.queue.clear();
+      p.queue.clear(this.batch);
       this.slots.push({
         id: p.info.id, name: p.info.name, character: p.info.character, kart: p.info.kart,
         primary: p.info.primary, secondary: p.info.secondary, bot: false,
@@ -478,13 +485,13 @@ export class RaceRoom {
     if (this.snapshotBuffer.byteLength < needed) this.snapshotBuffer = new ArrayBuffer(needed * 2);
 
     for (const p of this.players.values()) {
-      this.send(p.conn, { t: "race", seed, track: this.track, laps: this.world.laps, slots: this.slots, you: p.slot });
+      this.send(p.conn, { t: "race", seed, track: this.track, laps: this.world.laps, slots: this.slots, you: p.slot, batch: this.batch });
     }
     this.broadcastLobby();
     this.lastFrame = Date.now();
     this.accumulator = 0;
     this.loop = setInterval(() => this.frame(), 1000 / TICK_RATE);
-    log("race_start", { code: this.code, seed, track: this.track, humans: humans.length, bots: botCount, length: Math.round(this.world.track.length) });
+    log("race_start", { code: this.code, seed, track: this.track, humans: humans.length, bots: botCount, batch: this.batch, length: Math.round(this.world.track.length) });
   }
 
   private stopRace(): void {
