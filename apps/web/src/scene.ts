@@ -1,4 +1,4 @@
-import { BoostKind, FeatureKind, TOKEN_MAXING_SCALE, TOKEN_MAXING_SECONDS, type Pose, type Track, type TrackTheme, makePose, poseAt } from "@dario-kart/sim";
+import { BoostKind, FeatureKind, TrickKind, TOKEN_MAXING_SCALE, TOKEN_MAXING_SECONDS, type Pose, type Track, type TrackTheme, makePose, poseAt } from "@dario-kart/sim";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
@@ -740,6 +740,8 @@ export interface KartFx {
   drifting: number;
   driftCharge: number;
   trickT: number;
+  /** TrickKind of the current trick. */
+  trickKind?: number;
   slip: number;
   time: number;
   showLabel: boolean;
@@ -859,9 +861,13 @@ export class KartVisual {
     }
     this.body.rotation.y = squashT > 0 ? 0 : state.stunT > 0 ? state.time * 14 : -state.slip * 0.35;
     this.body.rotation.z = squashT > 0 || state.stunT > 0 ? 0 : state.slip * 0.2;
-    // Trick: a full barrel roll while airborne.
+    // Trick: a full barrel roll or front flip while airborne.
     this.body.rotation.x = 0;
-    if (squashT <= 0 && state.trickT > 0) this.body.rotation.z = (1 - state.trickT / 0.45) * Math.PI * 2;
+    if (squashT <= 0 && state.trickT > 0) {
+      const turn = (1 - state.trickT / 0.45) * Math.PI * 2;
+      if (state.trickKind === TrickKind.FrontFlip) this.body.rotation.x = turn;
+      else this.body.rotation.z = turn;
+    }
     if (squashT <= 0 && this.fit.hover) {
       this.body.position.y += 0.3 + Math.sin(state.time * 3.2 + this.fit.label) * 0.07;
       if (state.stunT <= 0 && state.trickT <= 0) this.body.rotation.z = state.slip * 0.45;
