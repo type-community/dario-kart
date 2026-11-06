@@ -138,7 +138,7 @@ export const STAT = {
 /** Why a kart is slower than it wants to be, so the HUD can always say. */
 export const SlowFlag = { Wall: 1, SlowZone: 2, Hit: 4, Squashed: 8 } as const;
 /** Air trick animations; one is picked at random each time a kart pulls a trick. */
-export const TrickKind = { BarrelRoll: 0, FrontFlip: 1 } as const;
+export const TrickKind = { BarrelRoll: 0, FrontFlip: 1, FlatSpin: 2 } as const;
 export const TRICK_KINDS = Object.keys(TrickKind).length;
 
 export const BoostKind = { None: 0, Pad: 1, Drift: 2, SuperDrift: 3, Landing: 4, Nitro: 5, UltraDrift: 6, Trick: 8, Rocket: 9 } as const;

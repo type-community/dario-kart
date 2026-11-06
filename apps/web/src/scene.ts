@@ -861,11 +861,12 @@ export class KartVisual {
     }
     this.body.rotation.y = squashT > 0 ? 0 : state.stunT > 0 ? state.time * 14 : -state.slip * 0.35;
     this.body.rotation.z = squashT > 0 || state.stunT > 0 ? 0 : state.slip * 0.2;
-    // Trick: a full barrel roll or front flip while airborne.
+    // Trick: a full barrel roll, front flip or flat spin while airborne.
     this.body.rotation.x = 0;
     if (squashT <= 0 && state.trickT > 0) {
       const turn = (1 - state.trickT / 0.45) * Math.PI * 2;
       if (state.trickKind === TrickKind.FrontFlip) this.body.rotation.x = turn;
+      else if (state.trickKind === TrickKind.FlatSpin) this.body.rotation.y = turn;
       else this.body.rotation.z = turn;
     }
     if (squashT <= 0 && this.fit.hover) {
