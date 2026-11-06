@@ -45,13 +45,25 @@ describe("input queue", () => {
     const taken: number[] = [];
     let seq = 0;
     for (let tick = 0; tick < 600; tick++) {
-      if (tick % 5 === 0) for (let i = 0; i < 5; i++) queue.push(++seq, 0, 0);
+      // Jitter often lands two packets together.
+      if (tick % 10 === 0) for (let i = 0; i < 10; i++) queue.push(++seq, 0, 0);
       taken.push(queue.take().seq);
     }
     // Every input is used once, in order: none were shed as "too far behind".
     expect(taken.slice(-500)).toEqual(Array.from({ length: 500 }, (_, i) => taken.at(-500)! + i));
-    const { depths } = run(queue, 600, seq, 120, 20, 5);
-    expect(Math.max(...depths.slice(-60))).toBeLessThanOrEqual(10);
+  });
+
+  test("a stall leaves no lag behind in a big race either", () => {
+    for (const batch of [5, 10]) {
+      const calm = new InputQueue();
+      calm.clear(batch);
+      const baseline = Math.max(...run(calm, 600, 0, -1, 0, batch).depths.slice(-60));
+      const queue = new InputQueue();
+      queue.clear(batch);
+      // A burst after a stall, landing out of step with the packet rhythm.
+      const { depths } = run(queue, 900, 0, 123, 37, batch);
+      expect(Math.max(...depths.slice(-60))).toBeLessThanOrEqual(baseline + 1);
+    }
   });
 
   test("a skipped input keeps its fire tap", () => {

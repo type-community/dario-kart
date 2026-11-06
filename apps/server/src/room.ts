@@ -44,6 +44,12 @@ const ABANDON_MS = 30_000;
 const QUEUE_SIZE = 64;
 /** Hard cap on buffered inputs, in packets; anything older is already late. */
 const QUEUE_MAX_PACKETS = 3;
+/**
+ * The queue drains to about one input just before each packet lands, whatever
+ * the packet size, so one that never drops below this over a window is pure
+ * added lag (usually left over from a burst after a stall).
+ */
+const QUEUE_SLACK = 2;
 const QUEUE_WINDOW = 30;
 /** Taps that must survive an input being skipped. */
 const EDGE_BITS = InputBit.Item | InputBit.Drift;
@@ -55,11 +61,6 @@ export class InputQueue {
   private low = QUEUE_SIZE;
   private taken = 0;
   private max = QUEUE_MAX_PACKETS * INPUTS_PER_PACKET;
-  /**
-   * Inputs arrive a packet at a time, so a queue that never drains below one
-   * packet over a window is pure added lag (usually left over from a burst after a stall).
-   */
-  private slack = INPUTS_PER_PACKET;
   readonly last: Input = makeInput();
 
   push(seq: number, steer: number, bits: number): void {
@@ -88,7 +89,7 @@ export class InputQueue {
     while (this.size > this.max) this.skip();
     this.low = Math.min(this.low, this.size);
     if (++this.taken >= QUEUE_WINDOW) {
-      if (this.low > this.slack) this.skip();
+      if (this.low > QUEUE_SLACK) this.skip();
       this.low = QUEUE_SIZE;
       this.taken = 0;
     }
@@ -106,7 +107,6 @@ export class InputQueue {
   /** Empty the queue for a race whose clients send `batch` inputs per packet. */
   clear(batch = INPUTS_PER_PACKET): void {
     this.max = QUEUE_MAX_PACKETS * batch;
-    this.slack = batch;
     this.head = 0;
     this.size = 0;
     this.low = QUEUE_SIZE;
