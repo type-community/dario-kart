@@ -47,6 +47,26 @@ export interface RaceResult {
   readonly time: number | null;
 }
 
+export interface ChatLine {
+  /** The sender's connection key (see `LobbyPlayer.key`). */
+  readonly key: string;
+  readonly name: string;
+  readonly text: string;
+}
+
+export const CHAT_MAX_LENGTH = 200;
+
+/**
+ * What the server keeps of a chat line: control and invisible formatting
+ * characters (bidi overrides included, but not the zero-width joiner that
+ * emoji sequences need) become spaces, runs of whitespace collapse, and it's
+ * capped at CHAT_MAX_LENGTH characters. Empty means "drop it".
+ */
+export const cleanChat = (text: unknown): string => {
+  const clean = (typeof text === "string" ? text : "").replace(/(?!\u200d)[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ").replace(/\s+/g, " ").trim();
+  return Array.from(clean).slice(0, CHAT_MAX_LENGTH).join("").trim();
+};
+
 export type ClientMessage =
   | { readonly t: "hello"; readonly v: number; readonly id: string; readonly name: string; readonly character: string; readonly kart: string; readonly primary: number; readonly secondary: number }
   /** `name` is optional so a client can talk to a server from before renames. */
@@ -58,6 +78,8 @@ export type ClientMessage =
   | { readonly t: "ping"; readonly at: number }
   | { readonly t: "leave" }
   | { readonly t: "emote"; readonly n: number }
+  /** A lobby chat line; the server cleans it with `cleanChat`. */
+  | { readonly t: "chat"; readonly text: string }
   | { readonly t: "clientError"; readonly message: string; readonly stack?: string; readonly context?: string }
   /** Connection quality so far this race; `final` once the race is over. */
   | { readonly t: "netStats"; readonly seed: number; readonly final: boolean; readonly report: NetReport };
@@ -69,6 +91,10 @@ export type ServerMessage =
   | { readonly t: "results"; readonly results: ReadonlyArray<RaceResult> }
   | { readonly t: "event"; readonly text: string }
   | { readonly t: "emote"; readonly slot: number; readonly n: number }
+  /** One new lobby chat line. */
+  | { readonly t: "chat"; readonly line: ChatLine }
+  /** The lobby's recent chat, sent when you join; replaces whatever the client had. */
+  | { readonly t: "chatHistory"; readonly lines: ReadonlyArray<ChatLine> }
   | { readonly t: "pong"; readonly at: number }
   | { readonly t: "error"; readonly message: string };
 

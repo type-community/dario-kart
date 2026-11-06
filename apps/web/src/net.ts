@@ -147,8 +147,11 @@ export class Net {
     }, delay);
   }
 
-  send(msg: ClientMessage): void {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+  /** False when there's no open connection to send on (the message is dropped). */
+  send(msg: ClientMessage): boolean {
+    if (this.ws?.readyState !== WebSocket.OPEN) return false;
+    this.ws.send(JSON.stringify(msg));
+    return true;
   }
 
   sendInputs(inputs: ReadonlyArray<Input>, race: number): void {

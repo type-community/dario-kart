@@ -1,5 +1,5 @@
 import {
-  CHARACTERS, KARTS, type LobbyPlayer, type RaceResult, THEMES, type ThemeId, characterById, kartById,
+  CHAT_MAX_LENGTH, CHARACTERS, type ChatLine, KARTS, type LobbyPlayer, type RaceResult, THEMES, type ThemeId, characterById, kartById,
 } from "@dario-kart/sim";
 import { avatarSvg, quipFor } from "./avatars.ts";
 
@@ -155,7 +155,23 @@ const showroom = (profile: Profile) => {
     </div>`;
 };
 
-export const lobbyView = (lobby: LobbyState, profile: Profile, nameSaved = false) => {
+export const chatLine = (l: ChatLine, you: string) =>
+  `<li${l.key === you ? ` class="mine"` : ""}><strong>${esc(l.name)}</strong> <span>${esc(l.text)}</span></li>`;
+
+const chatEmpty = `<li class="chat-empty">No messages yet. Say hi.</li>`;
+
+const chatBox = (lines: ReadonlyArray<ChatLine>, you: string) => `
+  <section class="chat" aria-labelledby="chat-heading">
+    <h2 id="chat-heading">Chat</h2>
+    <ol class="chat-log" role="log">${lines.length ? lines.map((l) => chatLine(l, you)).join("") : chatEmpty}</ol>
+    <form class="chat-form" data-form="chat" novalidate>
+      <input id="chat-input" name="chat" maxlength="${CHAT_MAX_LENGTH}" autocomplete="off" placeholder="Say something to the lobby" aria-label="Chat message" />
+      <button class="go" type="submit">Send</button>
+    </form>
+  </section>`;
+
+/** `chat` is null until the server sends the lobby's history: a lobby on older code has no chat. */
+export const lobbyView = (lobby: LobbyState, profile: Profile, nameSaved = false, chat: ReadonlyArray<ChatLine> | null = null) => {
   const host = lobby.players.find((p) => p.host);
   const hostIsMe = host !== undefined && host.key === lobby.you;
   const total = lobby.players.length + lobby.bots;
@@ -214,6 +230,7 @@ export const lobbyView = (lobby: LobbyState, profile: Profile, nameSaved = false
           <output for="bots">${lobby.bots}</output>
           <input id="bots" type="range" min="0" max="60" step="1" value="${lobby.bots}" ${hostIsMe ? "" : "disabled"} />
         </div>
+        ${chat ? chatBox(chat, lobby.you) : ""}
       </aside>
     </div>
   </section>`;
