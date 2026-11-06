@@ -64,7 +64,8 @@ export type ClientMessage =
 
 export type ServerMessage =
   | { readonly t: "lobby"; readonly v: number; readonly code: string; readonly players: ReadonlyArray<LobbyPlayer>; readonly track: ThemeId; readonly bots: number; readonly racing: boolean; readonly you: string }
-  | { readonly t: "race"; readonly seed: number; readonly track: ThemeId; readonly laps: number; readonly slots: ReadonlyArray<RaceSlot>; readonly you: number }
+  /** `batch` is how many inputs to send per packet; servers from before it existed expect INPUTS_PER_PACKET. */
+  | { readonly t: "race"; readonly seed: number; readonly track: ThemeId; readonly laps: number; readonly slots: ReadonlyArray<RaceSlot>; readonly you: number; readonly batch?: number }
   | { readonly t: "results"; readonly results: ReadonlyArray<RaceResult> }
   | { readonly t: "event"; readonly text: string }
   | { readonly t: "emote"; readonly slot: number; readonly n: number }
@@ -73,6 +74,11 @@ export type ServerMessage =
 
 /** Close code for a player removed from the lobby; the client doesn't reconnect. */
 export const KICKED = 4002;
+/**
+ * Close code for a full lobby; the client doesn't reconnect. Not 1013: Cloudflare
+ * closes with 1013 when a Durable Object is overloaded, and that's worth retrying.
+ */
+export const LOBBY_FULL = 4003;
 
 /** What the server keeps of a player's name; the client cleans names the same way. */
 export const cleanName = (name: unknown, fallback = "Racer"): string =>
@@ -86,6 +92,21 @@ export const MSG_SNAPSHOT = 2;
 
 /** Inputs per packet: the client batches two 60 Hz ticks into each 30 Hz send. */
 export const INPUTS_PER_PACKET = 2;
+
+/**
+ * Input packets per second one race can take in. Every packet is a separate
+ * Durable Object event, and an object stalls, then gets closed as overloaded,
+ * somewhere past ~1000 a second: 40 players at 30 Hz froze a race.
+ */
+const INPUT_PACKET_BUDGET = 600;
+
+/**
+ * Inputs per packet for a race with this many players: two (30 Hz) until the
+ * race would go over budget, then bigger, rarer packets. Your own kart is
+ * predicted, so this delays what others see of you, not how your kart feels.
+ */
+export const inputsPerPacket = (humans: number): number =>
+  Math.max(INPUTS_PER_PACKET, Math.min(10, Math.ceil((humans * 60) / INPUT_PACKET_BUDGET)));
 
 /**
  * Input packets carry the race they belong to (the race seed). A packet that

@@ -52,6 +52,7 @@ bun run smoke http://localhost:1337 20   # two headless clients play a real race
 bun scripts/predict-check.ts http://localhost:1337   # client prediction error vs server
 bun scripts/keyboard-driver.ts hold      # a headless keyboard player: race time, wall time, drift chains
 bun scripts/balance.ts 240 8             # Monte-Carlo kart balance: win rate and average finish per kart
+bun scripts/load.ts "" 50                # 50 remote players in one prod race (pass a ws:// URL for local)
 ```
 
 ## Logs
@@ -99,6 +100,7 @@ alchemy.run.ts    the whole stack: game Worker + Vite site
 - Every track sample carries a full 3D frame, so roads climb, crest, bank into corners and loop. The physics only needs yaw curvature, pitch curvature, slope and a loop flag; crests launch you when you're fast enough, loops hold you on.
 - Kart stats are tuned with `scripts/balance.ts` (constants in `STAT` in `world.ts`): every kart's average finish is within about 0.05 of even across hundreds of bot races, despite the karts driving nothing alike.
 - The server is authoritative. Clients predict their own kart (the countdown and GO included, so a stalled connection doesn't strand you on the line), rewind to the newest snapshot once a frame and replay unacknowledged inputs. Other karts are interpolated about 115 ms in the past, then carried forward along their latest motion to your kart's moment, so side by side on screen is side by side on the server.
+- Every input packet is a separate Durable Object event, and one object stalls past roughly 1000 a second (40 players at 30 Hz froze a race; Cloudflare then closes the sockets with 1013). Up to 20 players send two inputs per packet at 30 Hz; bigger races send bigger, rarer packets so a race stays under 600 a second (5 inputs at 12 Hz for 50 players). Your own kart is predicted, so that delays what others see of you, not how your kart handles. `scripts/load.ts` checks it: 50 players hold 60 ticks/s with snapshots every 50 ms; 100 players hold about 59 ticks/s.
 - Races are 2 laps and about 50 seconds. Tracks get a little longer and wider with more racers (about 1.3 km for 8 players, 1.6 km for 30, 2.1 km for 100).
 - Each city drives and looks different. The sim side is `mix` in `THEMES` (`content.ts`): SF is all jumps over big hills, NYC is flat with hard 90s, slow zones and boost lanes, The Fab is boost pads and pinball bumpers, Shenzhen is neon switchbacks with two loops, and Beijing is a wide, smooth ring road with almost no gimmicks, so it's about slipstreaming. The look (time of day, how buildings crowd the road, landmarks like the SF bridge, Broadway billboards, the Fab's ceiling and wafers, Shenzhen's supertall, Beijing's gates and pagodas) is in `apps/web/src/landmarks.ts`.
 - Item boxes hold Outage Missiles (two-thirds chance) or Token Maxing (one-third chance). The boost meter rewards driving well; Token Maxing also gives a modest 10% speed bonus while active. Giant size, squash recovery and its grace period are replicated with kart state for online play.

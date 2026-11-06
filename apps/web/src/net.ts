@@ -1,6 +1,6 @@
 import {
   type ClientMessage, type DecodedSnapshot, GapStats, type Input, KICKED, MSG_SNAPSHOT, type NetReport, type ServerMessage,
-  decodeSnapshot, encodeInputs,
+  LOBBY_FULL, decodeSnapshot, encodeInputs,
 } from "@dario-kart/sim";
 
 const gameUrl = (): string => {
@@ -10,15 +10,21 @@ const gameUrl = (): string => {
 
 /** Waits between reconnect attempts. After the last one we give up and say why. */
 const RETRY_MS = [300, 1000, 2000, 4000, 8000];
+/**
+ * A connection has to stay up this long before a later drop starts the backoff
+ * over. Resetting on open would retry every 300 ms forever when the server
+ * accepts and then closes us (an overloaded race, a full lobby on old code).
+ */
+const STABLE_MS = 10_000;
 /** No pong for this long means the socket is dead even if the browser hasn't noticed. */
 const PONG_TIMEOUT_MS = 7000;
 
 /**
  * Close codes that mean "don't come back": we left, the lobby is full, a
  * newer connection took our seat (retrying would just take it back), or we
- * were kicked.
+ * were kicked. Not 1013: that's Cloudflare shedding load, and worth a retry.
  */
-const FINAL_CODES = new Set([1000, 1013, 4000, KICKED]);
+const FINAL_CODES = new Set([1000, 4000, KICKED, LOBBY_FULL]);
 
 export class Net {
   private ws: WebSocket | null = null;
@@ -27,6 +33,8 @@ export class Net {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private target: { code: string; hello: Extract<ClientMessage, { t: "hello" }> } | null = null;
   private attempt = 0;
+  /** When the current socket opened, or -1 if it hasn't. */
+  private openedAt = -1;
   private lastPong = 0;
   rtt = 0;
   // Connection quality for the current race, reported to the server for the logs.
@@ -78,12 +86,13 @@ export class Net {
     const ws = new WebSocket(`${gameUrl()}/api/race/${target.code}?code=${target.code}`);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
+    this.openedAt = -1;
     ws.onopen = () => {
       if (this.ws !== ws) return;
       this.send(target.hello);
       this.lastPong = performance.now();
       if (this.attempt > 0) this.onReconnected();
-      this.attempt = 0;
+      this.openedAt = performance.now();
       this.stopPing();
       this.pingTimer = setInterval(() => {
         if (performance.now() - this.lastPong > PONG_TIMEOUT_MS && !document.hidden) {
@@ -122,12 +131,14 @@ export class Net {
     this.ws = null;
     this.stopPing();
     this.snapshotGaps.pause();
+    if (this.openedAt >= 0 && performance.now() - this.openedAt > STABLE_MS) this.attempt = 0;
     if (!this.target || FINAL_CODES.has(code) || this.attempt >= RETRY_MS.length) {
       this.target = null;
       this.onClose(`${reason || "Lost connection to the race server."} (code ${code})`, code);
       return;
     }
-    const delay = RETRY_MS[this.attempt++];
+    // Jittered: when a race drops everyone at once, they shouldn't all come back at once.
+    const delay = RETRY_MS[this.attempt++] * (0.5 + Math.random());
     this.reconnects++;
     this.onReconnecting(this.attempt);
     this.retryTimer = setTimeout(() => {
