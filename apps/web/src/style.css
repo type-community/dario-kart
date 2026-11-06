@@ -1570,6 +1570,28 @@ button {
   gap: 0.3rem;
 }
 
+.hats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.hat-option {
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-radius: 0.3rem;
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font: inherit;
+  font-size: var(--step--1);
+  font-weight: 700;
+  padding: 0.2rem 0.5rem;
+}
+
+.hat-option[aria-pressed="true"] {
+  border-color: #fff;
+  box-shadow: 0 0 0 3px var(--hazard);
+}
+
 .swatch {
   position: relative;
   width: 1.7rem;

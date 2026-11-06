@@ -308,13 +308,70 @@ const makeHead = (c: Character, look: Look): THREE.BufferGeometry => {
   return geometry;
 };
 
+const hatCache = new Map<string, THREE.BufferGeometry>();
+
+/**
+ * Hat geometry in head space (the head sphere is centered at y .32 and tops out
+ * near y .8; the face looks down +Z). `color` is the kart's primary paint.
+ */
+const makeHat = (hat: string, color: number): THREE.BufferGeometry | null => {
+  const p = new Parts();
+  const dome = () => new THREE.SphereGeometry(1, 28, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+  const light = shade(color, 0xffffff, .35), dark = shade(color, 0x000000, .3);
+  switch (hat) {
+    case "cap":
+      p.add(dome(), color, [0, .6, -.02], [.45, .33, .41]);
+      p.add(new THREE.CylinderGeometry(1, 1, 1, 28), dark, [0, .63, .33], [.3, .028, .25], [.18, 0, 0]);
+      p.oval(light, [0, .93, -.02], [.045, .025, .045]);
+      break;
+    case "beanie":
+      p.add(dome(), color, [0, .58, -.02], [.46, .42, .42]);
+      p.add(new THREE.CylinderGeometry(1, 1, 1, 28), light, [0, .62, -.02], [.47, .11, .43]);
+      p.oval(light, [0, 1.02, -.02], [.11, .1, .11]);
+      break;
+    case "top":
+      p.add(new THREE.CylinderGeometry(1, 1, 1, 32), 0x1d1d2b, [0, .72, -.02], [.54, .03, .48]);
+      p.add(new THREE.CylinderGeometry(.3, .27, .56, 32), 0x1d1d2b, [0, 1.01, -.02], [1, 1, .9]);
+      p.add(new THREE.CylinderGeometry(1, 1, 1, 32), color, [0, .79, -.02], [.278, .09, .252]);
+      break;
+    case "cowboy":
+      p.add(new THREE.CylinderGeometry(1, 1, 1, 32), 0xb27a43, [0, .7, -.02], [.7, .03, .6]);
+      for (const side of [-1, 1]) p.oval(0xb27a43, [side * .62, .76, -.02], [.1, .07, .42], [0, 0, side * .5]);
+      p.add(new THREE.CylinderGeometry(.24, .32, .32, 32), 0xb27a43, [0, .87, -.02], [1, 1, .85]);
+      p.oval(0x8c5a2b, [0, 1.03, -.02], [.17, .03, .17]);
+      p.add(new THREE.CylinderGeometry(1, 1, 1, 32), color, [0, .76, -.02], [.315, .07, .27]);
+      break;
+    case "crown": {
+      const gold = 0xf5c542;
+      p.add(dome(), shade(color, 0x8a1030, .4), [0, .78, -.02], [.31, .2, .27]);
+      p.add(new THREE.CylinderGeometry(1, 1, 1, 32), gold, [0, .77, -.02], [.36, .16, .32]);
+      for (let i = 0; i < 6; i++) {
+        const a = i / 6 * Math.PI * 2, x = Math.sin(a) * .34, z = Math.cos(a) * .3 - .02;
+        p.add(new THREE.ConeGeometry(.075, .2, 10), gold, [x, .94, z]);
+        p.oval(0xfff1b8, [x, 1.05, z], [.03, .03, .03]);
+      }
+      p.oval(color, [0, .77, .3], [.055, .055, .03]);
+      for (const side of [-1, 1]) p.oval(0xffffff, [side * .23, .77, .23], [.035, .035, .025], [0, side * .7, 0]);
+      break;
+    }
+    case "party":
+      p.add(new THREE.ConeGeometry(.24, .62, 28), color, [0, 1.0, -.02], [1, 1, .9], [0, 0, .12]);
+      p.add(new THREE.TorusGeometry(.235, .03, 8, 28), light, [0, .7, -.02], [1, .9, 1], [Math.PI / 2, 0, .12]);
+      p.oval(0xffffff, [-.04, 1.32, -.02], [.08, .08, .08]);
+      break;
+    default:
+      return null;
+  }
+  return p.finish();
+};
+
 /** Shared body + head geometry for every instance of a character. */
 export class DriverVisual {
   readonly root = new THREE.Group();
   private readonly head: THREE.Mesh;
   private readonly phase: number;
 
-  constructor(characterId: string) {
+  constructor(characterId: string, hat = "none", hatColor = 0xffffff) {
     const c = CHARACTERS.find((character) => character.id === characterId) ?? CHARACTERS[0];
     const look = LOOKS[c.id] ?? LOOKS.dario;
     let geometry = cache.get(c.id);
@@ -325,6 +382,18 @@ export class DriverVisual {
     this.head = new THREE.Mesh(geometry.head, material);
     this.head.position.set(0, 1.65, -.12);
     this.root.add(new THREE.Mesh(geometry.body, material), this.head);
+    const hatKey = `${hat}|${hatColor}`;
+    let hatGeometry = hatCache.get(hatKey);
+    if (hatGeometry === undefined && hat !== "none") {
+      const made = makeHat(hat, hatColor);
+      if (made) hatCache.set(hatKey, hatGeometry = made);
+    }
+    if (hatGeometry) {
+      // A child of the head, so it nods and wobbles with it.
+      const hatMesh = new THREE.Mesh(hatGeometry, material);
+      hatMesh.scale.set(look.width, look.height, 1);
+      this.head.add(hatMesh);
+    }
     this.root.scale.setScalar(.88);
     this.root.position.y = -.08;
     this.phase = CHARACTERS.indexOf(c) * 1.7;

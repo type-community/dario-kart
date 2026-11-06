@@ -213,6 +213,35 @@ describe("lobby", () => {
     expect(names()).toEqual(["Ada 3", "Bea"]);
   });
 
+  test("a player's hat reaches the lobby and the race grid; unknown hats become no hat", () => {
+    const room = new RaceRoom(() => {});
+    const a = client();
+    const b = client();
+    room.connect(a.conn, "HAT1");
+    room.connect(b.conn, "HAT1");
+    hello(room, a.conn, "Ada");
+    hello(room, b.conn, "Bea");
+    const hats = () => {
+      const lobby = b.messages.findLast((m) => m.t === "lobby");
+      return lobby && lobby.t === "lobby" ? lobby.players.map((p) => p.hat) : [];
+    };
+    // A hello without a hat (an older client) means no hat.
+    expect(hats()).toEqual(["none", "none"]);
+    const pick = (hat?: unknown) =>
+      room.message(a.conn, JSON.stringify({ t: "pick", character: "lisa", kart: "astra", primary: 0, secondary: 0, hat }));
+    pick("crown");
+    expect(hats()).toEqual(["crown", "none"]);
+    // A pick without a hat (an older client) keeps the hat.
+    pick();
+    expect(hats()).toEqual(["crown", "none"]);
+    pick("<script>");
+    expect(hats()).toEqual(["none", "none"]);
+    pick("top");
+    room.message(a.conn, JSON.stringify({ t: "start" }));
+    const race = b.messages.find((m) => m.t === "race");
+    expect(race && race.t === "race" ? race.slots.filter((s) => !s.bot).map((s) => s.hat) : []).toEqual(["top", "none"]);
+  });
+
   test("only the first of two tabs with one id is shown as host", () => {
     const room = new RaceRoom(() => {});
     const first = client();

@@ -254,7 +254,7 @@ export class RaceView {
     };
     this.visuals = setup.slots.map((slot, i) => {
       const v = new KartVisual({
-        kart: slot.kart, character: slot.character, name: slot.name, primary: slot.primary, secondary: slot.secondary,
+        kart: slot.kart, character: slot.character, name: slot.name, primary: slot.primary, secondary: slot.secondary, hat: slot.hat,
         me: i === setup.you && mode.kind !== "attract",
       });
       stage.scene.add(v.root);

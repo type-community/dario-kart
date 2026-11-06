@@ -1,5 +1,5 @@
 import {
-  CHARACTERS, KARTS, type LobbyPlayer, type RaceResult, THEMES, type ThemeId, characterById, kartById,
+  CHARACTERS, HATS, type HatId, KARTS, type LobbyPlayer, type RaceResult, THEMES, type ThemeId, characterById, hatById, kartById,
 } from "@dario-kart/sim";
 import { avatarSvg, quipFor } from "./avatars.ts";
 
@@ -10,6 +10,7 @@ export interface Profile {
   kart: string;
   primary: number;
   secondary: number;
+  hat: HatId;
 }
 
 export const SWATCHES = [
@@ -134,6 +135,20 @@ const swatchRow = (label: string, slot: "primary" | "secondary", current: number
   </div>
 `;
 
+const hatRow = (current: HatId) => `
+  <div class="paint-row" role="group" aria-label="Hat">
+    <span class="paint-label">Hat</span>
+    <div class="hats">
+      ${HATS.map((h) => `<button type="button" class="hat-option" data-hat="${h.id}" aria-pressed="${h.id === current}">${h.name}</button>`).join("")}
+    </div>
+  </div>
+`;
+
+const wearing = (hat: HatId | undefined) => {
+  const h = hatById(hat);
+  return h.id === "none" ? "" : `, wearing a ${h.name.toLowerCase()}`;
+};
+
 const showroom = (profile: Profile) => {
   const c = characterById(profile.character);
   const k = kartById(profile.kart);
@@ -142,7 +157,7 @@ const showroom = (profile: Profile) => {
       <div class="showroom-caption">
         ${avatarSvg(c.id, 48)}
         <div>
-          <strong>${c.name} <span>in ${k.name}</span></strong>
+          <strong>${c.name} <span>in ${k.name}${wearing(profile.hat)}</span></strong>
           <small>${c.org}. ${quipFor(c.id)}</small>
         </div>
       </div>
@@ -151,6 +166,7 @@ const showroom = (profile: Profile) => {
     <div class="paint">
       ${swatchRow("Primary", "primary", profile.primary)}
       ${swatchRow("Secondary", "secondary", profile.secondary)}
+      ${hatRow(profile.hat)}
       <button type="button" class="quiet" data-action="factory-paint">Use ${k.name} factory colors</button>
     </div>`;
 };
@@ -196,7 +212,7 @@ export const lobbyView = (lobby: LobbyState, profile: Profile, nameSaved = false
             return `<li>
               <span class="pos">${i + 1}</span>
               <span class="dot">${avatarSvg(c.id, 28, false)}</span>
-              <span class="who">${esc(p.name)}<small><i style="background:${hex(p.primary)}"></i><i style="background:${hex(p.secondary)}"></i>${c.name} in ${kartById(p.kart).name}</small></span>
+              <span class="who">${esc(p.name)}<small><i style="background:${hex(p.primary)}"></i><i style="background:${hex(p.secondary)}"></i>${c.name} in ${kartById(p.kart).name}${p.hat && p.hat !== "none" ? ` · ${hatById(p.hat).name}` : ""}</small></span>
               <span class="tag">${p.key === lobby.you ? "You" : p.id === profile.id ? "Your other tab" : p.host ? "Host" : ""}</span>
               ${p.key === lobby.you
                 ? `<button class="quiet kick" type="button" data-action="rename">Rename</button>`

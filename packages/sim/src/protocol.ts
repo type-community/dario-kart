@@ -19,6 +19,21 @@ export interface Paint {
   readonly secondary: number;
 }
 
+/** Hats a driver can wear. Cosmetic only: the sim never sees them. */
+export const HATS = [
+  { id: "none", name: "No hat" },
+  { id: "cap", name: "Cap" },
+  { id: "beanie", name: "Beanie" },
+  { id: "top", name: "Top hat" },
+  { id: "cowboy", name: "Cowboy hat" },
+  { id: "crown", name: "Crown" },
+  { id: "party", name: "Party hat" },
+] as const;
+export type HatId = (typeof HATS)[number]["id"];
+export const hatById = (id: unknown) => HATS.find((h) => h.id === id) ?? HATS[0];
+/** Unknown or missing hats (older clients, bad input) become no hat. */
+export const validHat = (value: unknown): HatId => hatById(value).id;
+
 export interface LobbyPlayer extends Paint {
   readonly id: string;
   /** This connection. Unlike `id`, it's unique even when one player has two tabs open. */
@@ -26,6 +41,8 @@ export interface LobbyPlayer extends Paint {
   readonly name: string;
   readonly character: string;
   readonly kart: string;
+  /** Optional so lobbies from before hats still parse. */
+  readonly hat?: HatId;
   readonly host: boolean;
 }
 
@@ -34,6 +51,7 @@ export interface RaceSlot extends Paint {
   readonly name: string;
   readonly character: string;
   readonly kart: string;
+  readonly hat?: HatId;
   readonly bot: boolean;
 }
 
@@ -48,9 +66,9 @@ export interface RaceResult {
 }
 
 export type ClientMessage =
-  | { readonly t: "hello"; readonly v: number; readonly id: string; readonly name: string; readonly character: string; readonly kart: string; readonly primary: number; readonly secondary: number }
+  | { readonly t: "hello"; readonly v: number; readonly id: string; readonly name: string; readonly character: string; readonly kart: string; readonly primary: number; readonly secondary: number; readonly hat?: string }
   /** `name` is optional so a client can talk to a server from before renames. */
-  | { readonly t: "pick"; readonly name?: string; readonly character: string; readonly kart: string; readonly primary: number; readonly secondary: number }
+  | { readonly t: "pick"; readonly name?: string; readonly character: string; readonly kart: string; readonly primary: number; readonly secondary: number; readonly hat?: string }
   | { readonly t: "settings"; readonly track: ThemeId; readonly bots: number }
   | { readonly t: "start" }
   /** Remove a lobby entry by `key`. The host can remove anyone, anyone can remove their own other tabs. */
