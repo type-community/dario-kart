@@ -137,6 +137,10 @@ export const STAT = {
 };
 /** Why a kart is slower than it wants to be, so the HUD can always say. */
 export const SlowFlag = { Wall: 1, SlowZone: 2, Hit: 4, Squashed: 8 } as const;
+/** Air trick animations; one is picked at random each time a kart pulls a trick. */
+export const TrickKind = { BarrelRoll: 0, FrontFlip: 1, FlatSpin: 2 } as const;
+export const TRICK_KINDS = Object.keys(TrickKind).length;
+
 export const BoostKind = { None: 0, Pad: 1, Drift: 2, SuperDrift: 3, Landing: 4, Nitro: 5, UltraDrift: 6, Trick: 8, Rocket: 9 } as const;
 const MISSILE_SPEED = 88;
 const BOX_RESPAWN_TICKS = 2 * TICK_RATE;
@@ -204,6 +208,8 @@ export class Kart {
   passT = 0;
   trickT = 0;
   trickPending = 0;
+  /** Which TrickKind animation the current trick plays. */
+  trickKind = 0;
   startHold = 0;
   /** 0 normal, 1 good, 2 perfect */
   startResult = 0;
@@ -260,7 +266,7 @@ export const KART_NET_FIELDS = [
   "dist", "d", "z", "vz", "heading", "slip", "speed", "kickV",
   "boostT", "boostKind", "stunT", "giantT", "squashT", "squashGuardT", "slowFlags", "airT",
   "drifting", "driftDir", "driftCharge", "hp", "gpus", "draft", "nitro", "nitroLit", "driftChain", "chainT", "passes", "passT",
-  "trickT", "trickPending", "startHold", "startResult",
+  "trickT", "trickPending", "trickKind", "startHold", "startResult",
   "item", "itemCount", "item2", "item2Count", "finishTick", "prevBits",
 ] as const satisfies ReadonlyArray<keyof Kart>;
 
@@ -746,6 +752,7 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
   if (!grounded && control && pressed & InputBit.Drift && kart.airT > 0.06 && !kart.trickPending) {
     kart.trickT = 0.45;
     kart.trickPending = 1;
+    kart.trickKind = Math.floor(hash01(world.seed, world.tick, kart.slot + 67) * TRICK_KINDS);
   }
 
   if (!world.predict && control && pressed & InputBit.Item) {

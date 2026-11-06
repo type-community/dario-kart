@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  BoostKind, CHAIN_WINDOW, CLOSE_PASS_WIDTH, InputBit, NITRO_CLOSE_PASS, NITRO_MIN, NITRO_SECONDS, SlowFlag, ItemKind, KARTS, Phase, THEMES, World, botInput, decodeInputs, decodeSnapshot, encodeInputs,
+  BoostKind, TRICK_KINDS, TrickKind, CHAIN_WINDOW, CLOSE_PASS_WIDTH, InputBit, NITRO_CLOSE_PASS, NITRO_MIN, NITRO_SECONDS, SlowFlag, ItemKind, KARTS, Phase, THEMES, World, botInput, decodeInputs, decodeSnapshot, encodeInputs,
   encodeSnapshot, GapStats, cleanNetReport, generateTrack, makeInput, snapshotSize, targetTrackLength,
 } from "../src/index.ts";
 
@@ -405,6 +405,27 @@ describe("fun mechanics", () => {
     inputs[0].bits = 0;
     for (let t = 0; t < 120 && kart.z > 0; t++) world.step(inputs);
     expect(kart.boostKind).toBe(BoostKind.Trick);
+  });
+
+  test("tricks pick from the whole animation set, deterministically", () => {
+    const pullTrick = (seed: number) => {
+      const world = new World({ theme: "sf", seed, racers: racers(1) });
+      const inputs = world.karts.map(() => makeInput());
+      while (world.phase !== Phase.Racing) world.step(inputs);
+      const kart = world.karts[0];
+      kart.speed = 30;
+      kart.z = 0.05;
+      kart.vz = 12;
+      for (let t = 0; t < 6; t++) world.step(inputs);
+      inputs[0].bits = InputBit.Drift;
+      world.step(inputs);
+      expect(kart.trickPending).toBe(1);
+      return kart.trickKind;
+    };
+    const kinds = Array.from({ length: 40 }, (_, seed) => pullTrick(seed + 1));
+    expect(TRICK_KINDS).toBe(Object.keys(TrickKind).length);
+    for (let k = 0; k < TRICK_KINDS; k++) expect(kinds).toContain(k);
+    expect(pullTrick(7)).toBe(kinds[6]);
   });
 
   test("GPUs raise top speed and spill on hits", () => {

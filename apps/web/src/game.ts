@@ -602,7 +602,7 @@ export class RaceView {
       v.apply({
         speed: kart.speed, boostT: kart.boostT, boostKind: kart.boostKind, nitro: kart.nitroLit > 0, stunT: kart.stunT,
         giantT: kart.giantT, squashT: kart.squashT,
-        drifting: kart.drifting, driftCharge: kart.driftCharge, trickT: kart.trickT, slip: r.slip, time: this.time,
+        drifting: kart.drifting, driftCharge: kart.driftCharge, trickT: kart.trickT, trickKind: kart.trickKind, slip: r.slip, time: this.time,
         items: (kart.item === ItemKind.Missile ? 1 : 0) + (kart.item2 === ItemKind.Missile ? 1 : 0),
         showLabel: this.mode.kind !== "attract" && i !== you && point.distanceToSquared(this.stage.camera.position) > 144,
       });
