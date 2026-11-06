@@ -764,6 +764,23 @@ export const buildKartBody = (look: Pick<KartLook, "kart" | "character" | "prima
   return { body, glow, driver, fit };
 };
 
+/** Length of a trick in seconds (mirrors the sim's trickT). */
+const TRICK_SECONDS = 0.45;
+
+/** Poses the kart body for a trick; `t` runs 0 → 1 over the trick. */
+export type TrickAnimation = (body: THREE.Object3D, t: number) => void;
+
+/** The random set of airborne trick animations. */
+export const TRICK_ANIMATIONS: readonly TrickAnimation[] = [
+  // Barrel roll: a full roll around the forward axis.
+  (body, t) => { body.rotation.z = t * Math.PI * 2; },
+  // Front flip: a full nose-over-tail flip.
+  (body, t) => { body.rotation.x = t * Math.PI * 2; },
+];
+
+export const pickTrickAnimation = (roll = Math.random()): TrickAnimation =>
+  TRICK_ANIMATIONS[Math.min(TRICK_ANIMATIONS.length - 1, Math.floor(roll * TRICK_ANIMATIONS.length))];
+
 /** Visual for one racer. */
 export class KartVisual {
   readonly root = new THREE.Group();
@@ -785,6 +802,8 @@ export class KartVisual {
     return Math.max(0, this.fit.label - 3.1);
   }
   private readonly rack: THREE.Mesh[] = [];
+  private trick: TrickAnimation = TRICK_ANIMATIONS[0];
+  private lastTrickT = 0;
 
   constructor(look: KartLook) {
     const built = buildKartBody(look);
@@ -859,9 +878,11 @@ export class KartVisual {
     }
     this.body.rotation.y = squashT > 0 ? 0 : state.stunT > 0 ? state.time * 14 : -state.slip * 0.35;
     this.body.rotation.z = squashT > 0 || state.stunT > 0 ? 0 : state.slip * 0.2;
-    // Trick: a full barrel roll while airborne.
+    // Trick: each new trick picks a random animation from TRICK_ANIMATIONS.
     this.body.rotation.x = 0;
-    if (squashT <= 0 && state.trickT > 0) this.body.rotation.z = (1 - state.trickT / 0.45) * Math.PI * 2;
+    if (state.trickT > this.lastTrickT) this.trick = pickTrickAnimation();
+    this.lastTrickT = state.trickT;
+    if (squashT <= 0 && state.trickT > 0) this.trick(this.body, 1 - state.trickT / TRICK_SECONDS);
     if (squashT <= 0 && this.fit.hover) {
       this.body.position.y += 0.3 + Math.sin(state.time * 3.2 + this.fit.label) * 0.07;
       if (state.stunT <= 0 && state.trickT <= 0) this.body.rotation.z = state.slip * 0.45;
