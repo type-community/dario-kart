@@ -1,0 +1,6 @@
+# Paths that always need a person (see scripts/review/risk-tier.ts).
+/.github/                      @krashidov
+/alchemy.run.ts                @krashidov
+/apps/server/src/              @krashidov
+/packages/sim/src/protocol.ts  @krashidov
+/specs/                        @krashidov
