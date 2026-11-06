@@ -1,4 +1,4 @@
-import { CHARACTERS, type Character } from "@dario-kart/sim";
+import { CHARACTERS, type Character, validHat } from "@dario-kart/sim";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { TessellateModifier } from "three/examples/jsm/modifiers/TessellateModifier.js";
@@ -334,7 +334,7 @@ const hatPaintMaterial = (color: number) => {
 const makeHat = (hat: string): HatGeometry => {
   const f = new Parts(), c = new Parts();
   const dome = () => new THREE.SphereGeometry(1, 28, 12, 0, Math.PI * 2, 0, Math.PI / 2);
-  const paint = 0xffffff, dark = 0xb3b3b3, white = 0xf4f1ea;
+  const paint = 0xffffff, dark = 0xdadada, white = 0xf4f1ea;
   switch (hat) {
     case "cap":
       c.add(dome(), paint, [0, .6, -.02], [.45, .33, .41]);
@@ -397,8 +397,9 @@ export class DriverVisual {
     this.head = new THREE.Mesh(geometry.head, material);
     this.head.position.set(0, 1.65, -.12);
     this.root.add(new THREE.Mesh(geometry.body, material), this.head);
-    let hatGeometry = hatCache.get(hat);
-    if (!hatGeometry) hatCache.set(hat, hatGeometry = makeHat(hat));
+    const hatId = validHat(hat);
+    let hatGeometry = hatCache.get(hatId);
+    if (!hatGeometry) hatCache.set(hatId, hatGeometry = makeHat(hatId));
     // Children of the head, so the hat nods and wobbles with it.
     for (const [g, m] of [[hatGeometry.fixed, material], [hatGeometry.paint, hatPaintMaterial(hatColor)]] as const) {
       if (!g) continue;

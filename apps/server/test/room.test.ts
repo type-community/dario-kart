@@ -237,7 +237,7 @@ describe("lobby", () => {
     pick("<script>");
     expect(hats()).toEqual(["none", "none"]);
     pick("top");
-    // A hello without a hat (an older tab reconnecting) keeps it too.
+    // A hello without a hat (an older client) keeps it too.
     hello(room, a.conn, "Ada");
     expect(hats()).toEqual(["top", "none"]);
     room.message(a.conn, JSON.stringify({ t: "start" }));

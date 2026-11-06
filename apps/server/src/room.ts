@@ -273,7 +273,7 @@ export class RaceRoom {
         info.kart = validKart(msg.kart);
         info.primary = validColor(msg.primary, kartById(info.kart).color);
         info.secondary = validColor(msg.secondary, kartById(info.kart).accent);
-        // Like pick: a hello without a hat (an older tab reconnecting) keeps the hat.
+        // Like pick: a hello without a hat (an older client) keeps the hat it has.
         if (msg.hat !== undefined) info.hat = validHat(msg.hat);
         if (!existing) this.players.set(conn, this.newPlayer(conn, info, crypto.randomUUID().slice(0, 8), this.joinCounter++));
         const player = this.players.get(conn)!;
