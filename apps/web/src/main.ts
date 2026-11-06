@@ -1,6 +1,6 @@
 import "./style.css";
 import {
-  CHARACTERS, KARTS, KICKED, LAPS, cleanName, PROTOCOL_VERSION, type RaceResult, type RaceSlot, type ServerMessage, THEMES, TICK_RATE, type ThemeId, kartById,
+  CHARACTERS, KARTS, KICKED, LAPS, cleanName, PROTOCOL_VERSION, type RaceResult, type RaceSlot, type ServerMessage, THEMES, TICK_RATE, type ThemeId, kartById, validHat,
 } from "@dario-kart/sim";
 import { sound } from "./audio.ts";
 import { Controls } from "./controls.ts";
@@ -39,6 +39,7 @@ const profile: Profile = {
   kart: initialKart,
   primary: Number(stored("primary", String(kartById(initialKart).color))),
   secondary: Number(stored("secondary", String(kartById(initialKart).accent))),
+  hat: validHat(stored("hat", "none")),
 };
 const saveProfile = () => {
   for (const [k, v] of Object.entries(profile)) if (k !== "id") localStorage.setItem(`dk.${k}`, String(v));
@@ -93,7 +94,7 @@ const practice = () => {
   const requested = new URLSearchParams(location.search).get("track");
   const theme = THEMES.find((t) => t.id === requested)?.id ?? THEMES[Math.floor(Math.random() * THEMES.length)].id;
   const slots: RaceSlot[] = [
-    { id: profile.id, name: profile.name, character: profile.character, kart: profile.kart, primary: profile.primary, secondary: profile.secondary, bot: false },
+    { id: profile.id, name: profile.name, character: profile.character, kart: profile.kart, primary: profile.primary, secondary: profile.secondary, hat: profile.hat, bot: false },
     ...Array.from({ length: 7 }, (_, i) => {
       const c = CHARACTERS[(i + 3) % CHARACTERS.length];
       const kart = KARTS[(i + 1) % KARTS.length];
@@ -170,7 +171,7 @@ const newCode = () => {
 
 const hello = () => ({
   t: "hello" as const, v: PROTOCOL_VERSION, id: profile.id, name: profile.name, character: profile.character, kart: profile.kart,
-  primary: profile.primary, secondary: profile.secondary,
+  primary: profile.primary, secondary: profile.secondary, hat: profile.hat,
 });
 
 const join = (code: string, pushHistory = true) => {
@@ -223,7 +224,7 @@ window.addEventListener("unhandledrejection", (e) => reportError(String(e.reason
 const sendPick = () => {
   saveProfile();
   net.updateHello(hello());
-  net.send({ t: "pick", name: profile.name, character: profile.character, kart: profile.kart, primary: profile.primary, secondary: profile.secondary });
+  net.send({ t: "pick", name: profile.name, character: profile.character, kart: profile.kart, primary: profile.primary, secondary: profile.secondary, hat: profile.hat });
   if (screen.kind === "lobby") go({ kind: "lobby" });
 };
 
@@ -377,6 +378,9 @@ ui.addEventListener("click", (e) => {
     sendPick();
   } else if (target.dataset.paint) {
     profile[target.dataset.paint as "primary" | "secondary"] = Number(target.dataset.color);
+    sendPick();
+  } else if (target.dataset.hat) {
+    profile.hat = validHat(target.dataset.hat);
     sendPick();
   } else if (target.dataset.character) {
     profile.character = target.dataset.character;

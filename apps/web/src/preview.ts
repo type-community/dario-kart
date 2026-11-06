@@ -8,6 +8,7 @@ export interface PreviewLook {
   character: string;
   primary: number;
   secondary: number;
+  hat?: string;
 }
 
 /** A turntable for the kart you're building in the lobby. Owns its own small renderer. */
@@ -75,7 +76,7 @@ export class KartPreview {
   }
 
   setLook(look: PreviewLook): void {
-    const key = `${look.kart}|${look.character}|${look.primary}|${look.secondary}`;
+    const key = `${look.kart}|${look.character}|${look.primary}|${look.secondary}|${look.hat}`;
     if (key === this.key) return;
     this.key = key;
     if (this.body) {

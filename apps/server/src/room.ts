@@ -2,7 +2,7 @@ import {
   CHARACTERS, type ClientMessage, GapStats, type Input, InputBit, KARTS, type LobbyPlayer, Phase,
   type RaceResult, type RaceSlot, SNAPSHOT_ACK_OFFSET, type ServerMessage, THEMES, TICK_RATE,
   type ThemeId, World, botInput, characterIndex, decodeInputs, encodeSnapshot, kartIndex,
-  INPUTS_PER_PACKET, KICKED, LOBBY_FULL, PROTOCOL_VERSION, inputsPerPacket, type NetReport, cleanName, cleanNetReport, kartById, makeInput, snapshotSize, validColor,
+  INPUTS_PER_PACKET, KICKED, LOBBY_FULL, PROTOCOL_VERSION, inputsPerPacket, type NetReport, cleanName, cleanNetReport, kartById, makeInput, snapshotSize, validColor, validHat, type HatId,
 } from "@dario-kart/sim";
 
 /**
@@ -23,6 +23,7 @@ export interface PlayerInfo {
   kart: string;
   primary: number;
   secondary: number;
+  hat: HatId;
 }
 
 /** What survives a hibernation, stored on the socket. */
@@ -179,7 +180,8 @@ export class RaceRoom {
     if (!saved) return;
     this.code ||= code;
     this.joinCounter = Math.max(this.joinCounter, saved.joinedAt + 1);
-    const player = this.newPlayer(conn, saved.info, saved.key, saved.joinedAt);
+    // Sockets saved before hats existed come back without one.
+    const player = this.newPlayer(conn, { ...saved.info, hat: validHat(saved.info.hat) }, saved.key, saved.joinedAt);
     this.players.set(conn, player);
     this.save(player);
   }
@@ -264,12 +266,15 @@ export class RaceRoom {
           kart: "",
           primary: 0,
           secondary: 0,
+          hat: "none",
         };
         info.name = cleanName(msg.name);
         info.character = validCharacter(msg.character);
         info.kart = validKart(msg.kart);
         info.primary = validColor(msg.primary, kartById(info.kart).color);
         info.secondary = validColor(msg.secondary, kartById(info.kart).accent);
+        // Like pick: a hello without a hat (an older client) keeps the hat it has.
+        if (msg.hat !== undefined) info.hat = validHat(msg.hat);
         if (!existing) this.players.set(conn, this.newPlayer(conn, info, crypto.randomUUID().slice(0, 8), this.joinCounter++));
         const player = this.players.get(conn)!;
         this.save(player);
@@ -293,6 +298,7 @@ export class RaceRoom {
         player.info.kart = validKart(msg.kart);
         player.info.primary = validColor(msg.primary, player.info.primary);
         player.info.secondary = validColor(msg.secondary, player.info.secondary);
+        if (msg.hat !== undefined) player.info.hat = validHat(msg.hat);
         this.save(player);
         this.broadcastLobby();
         break;
@@ -419,7 +425,7 @@ export class RaceRoom {
       .sort((a, b) => a.joinedAt - b.joinedAt)
       .map((p) => ({
         id: p.info.id, key: p.key, name: p.info.name, character: p.info.character, kart: p.info.kart,
-        primary: p.info.primary, secondary: p.info.secondary, host: p === host,
+        primary: p.info.primary, secondary: p.info.secondary, hat: p.info.hat, host: p === host,
       }));
   }
 
@@ -460,7 +466,7 @@ export class RaceRoom {
       p.queue.clear(this.batch);
       this.slots.push({
         id: p.info.id, name: p.info.name, character: p.info.character, kart: p.info.kart,
-        primary: p.info.primary, secondary: p.info.secondary, bot: false,
+        primary: p.info.primary, secondary: p.info.secondary, hat: p.info.hat, bot: false,
       });
       this.slotPlayers.push(p);
     });

@@ -726,6 +726,7 @@ export interface KartLook {
   readonly name: string;
   readonly primary: number;
   readonly secondary: number;
+  readonly hat?: string;
   readonly me: boolean;
 }
 
@@ -748,14 +749,14 @@ export interface KartFx {
 }
 
 /** Builds the kart body (shared by races and the lobby preview). Faces local +Z. */
-export const buildKartBody = (look: Pick<KartLook, "kart" | "character" | "primary" | "secondary">) => {
+export const buildKartBody = (look: Pick<KartLook, "kart" | "character" | "primary" | "secondary" | "hat">) => {
   const body = new THREE.Group();
   const glow = new THREE.MeshBasicMaterial({ color: 0x3de0ff });
   for (const [part, geo] of kartGeometry(look.kart)) {
     const mat = part === "glow" ? glow : partMaterial(part as Part, look.primary, look.secondary);
     body.add(new THREE.Mesh(geo, mat));
   }
-  const driver = new DriverVisual(look.character);
+  const driver = new DriverVisual(look.character, look.hat, look.primary);
   const fit = chassisFit(look.kart);
   driver.root.position.y += fit.seat.y;
   driver.root.position.z += fit.seat.z;
