@@ -1,5 +1,5 @@
 import {
-  BoostKind, COUNTDOWN_TICKS, type DecodedSnapshot, DT, type Input, InputBit, ItemKind, KART_NET_FIELDS, type Kart,
+  BoostKind, COUNTDOWN_TICKS, TrickKind, type DecodedSnapshot, DT, type Input, InputBit, ItemKind, KART_NET_FIELDS, type Kart,
   Phase, type RaceSlot, TICK_RATE, type ThemeId, World, applyKartFields, botInput, characterIndex,
   copyInput, kartIndex, makeInput, themeById, touchesBox, touchesCoin, wrapS,
 } from "@dario-kart/sim";
@@ -831,7 +831,7 @@ export class RaceView {
     w.air = air;
     if (me.trickT > 0 && w.trick <= 0) {
       sound.trick();
-      hud.calloutText("Trick!", "item");
+      hud.calloutText(me.trickKind === TrickKind.FrontFlip ? "Front flip!" : "Barrel roll!", "item");
     }
     w.trick = me.trickT;
     const tier = me.drifting ? (me.driftCharge >= 2.3 ? 3 : me.driftCharge >= 1.4 ? 2 : me.driftCharge >= 0.7 ? 1 : 0) : 0;
