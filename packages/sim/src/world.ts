@@ -12,6 +12,8 @@ export const TOKEN_MAXING_SECONDS = 8;
 export const TOKEN_MAXING_SCALE = 1.85;
 export const TOKEN_MAXING_SPEED_MULTIPLIER = 1.1;
 export const SQUASH_SECONDS = 1.2;
+/** Length of an airborne trick in seconds (trickT counts down from this). */
+export const TRICK_SECONDS = 0.45;
 /** Time to drive clear after recovering, even if the giant is still overlapping. */
 export const SQUASH_GRACE_SECONDS = 1;
 /** Once someone finishes, everyone else has this long before the race is called. */
@@ -744,7 +746,7 @@ const stepKart = (world: World, kart: Kart, input: Input): void => {
 
   // Tap drift in the air to pull a trick; land it for a boost.
   if (!grounded && control && pressed & InputBit.Drift && kart.airT > 0.06 && !kart.trickPending) {
-    kart.trickT = 0.45;
+    kart.trickT = TRICK_SECONDS;
     kart.trickPending = 1;
   }
 
