@@ -28,6 +28,11 @@ const LOOKS: Record<string, Look> = {
   mira: { hair: "long", width: .93, height: 1.02, brow: .025, smile: .8, iris: 0x674f86 },
   jensen: { hair: "swept", glasses: "square", jacket: true, width: 1.02, height: .98, brow: .025, smile: 1, iris: 0x745338 },
   demis: { hair: "receding", jacket: true, width: 1, height: 1.02, brow: .03, smile: .8, iris: 0x557b79, beard: true },
+  tim: { hair: "crop", glasses: "square", width: .96, height: 1.03, brow: .01, smile: .75, iris: 0x5a6f80 },
+  andy: { hair: "bald", jacket: true, width: 1.02, height: 1, brow: .03, smile: .95, iris: 0x6a5a48 },
+  arthur: { hair: "tousled", width: .95, height: 1.03, brow: .015, smile: .6, iris: 0x5b6e4a, beard: true },
+  aravind: { hair: "part", width: .93, height: 1.04, brow: .03, smile: .85, iris: 0x4a3426 },
+  liang: { hair: "part", glasses: "square", width: .97, height: 1, brow: 0, smile: .5, iris: 0x2e241c },
 };
 
 // A soft toon ramp keeps the graphic colors without turning curved surfaces into hard bands.

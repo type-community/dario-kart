@@ -1,6 +1,6 @@
 # Dario Kart
 
-A browser kart racer for big lobbies. Ten AI lab CEOs, seven AI-model karts, five cities, and a track that grows with the number of racers.
+A browser kart racer for big lobbies. Fifteen tech CEOs, seven AI-model karts, five cities, and a track that grows with the number of racers.
 
 ## Run it locally
 
